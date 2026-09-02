@@ -234,7 +234,7 @@ export default function GraphView({ datasetId, theme }) {
             </div>
           ) : (
 
-          {/* Filters Pane Content */}
+          /* Filters Pane Content */
             <div className="space-y-6 text-sm">
               <div>
                 <label className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
