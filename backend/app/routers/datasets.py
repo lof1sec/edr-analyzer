@@ -16,9 +16,9 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
 
     contents = await file.read()
     try:
-        text = contents.decode('utf-8-sig') # Handle BOM if present
+        text = contents.decode('utf-8-sig').replace('\x00', '') # Handle BOM if present
     except UnicodeDecodeError:
-        text = contents.decode('latin-1')
+        text = contents.decode('latin-1').replace('\x00', '')
 
     # Create new dataset entry
     dataset = Dataset(name=file.filename)
