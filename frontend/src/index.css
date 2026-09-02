@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-process: #4d0000;
+  --color-process-border: #ff4d4d;
+  --color-file: #00264d;
+  --color-file-border: #4da6ff;
+  --color-module: #4d0099;
+  --color-module-border: #b366ff;
+  --color-registry: #804000;
+  --color-registry-border: #ff9933;
+  --color-network: #003333;
+  --color-network-border: #00ffff;
+  --color-cmd: #332b00;
+  --color-cmd-border: #ffcc00;
+  --color-alert: #b30000;
+  --color-alert-border: #ff0000;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-50 transition-colors duration-200;
+  }
+}
