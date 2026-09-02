@@ -1,4 +1,3 @@
-
 services:
   db:
     image: postgres:15
@@ -10,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d edr_logs"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build:
@@ -19,7 +23,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/edr_logs
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./backend:/app
 

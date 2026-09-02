@@ -2,11 +2,30 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app import models, database
 from app.routers import datasets, graph
+from contextlib import asynccontextmanager
+import time
+from sqlalchemy.exc import OperationalError
 
-# Create tables if they don't exist
-models.Base.metadata.create_all(bind=database.engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Retry logic for database connection on startup
+    retries = 5
+    while retries > 0:
+        try:
+            models.Base.metadata.create_all(bind=database.engine)
+            print("Successfully connected to the database and created tables.")
+            break
+        except OperationalError:
+            retries -= 1
+            print(f"Database not ready. Retrying in 5 seconds... ({retries} left)")
+            time.sleep(5)
 
-app = FastAPI(title="EDR Logs Analysis API")
+    if retries == 0:
+        print("Failed to connect to the database. Starting anyway, but expect errors.")
+
+    yield
+
+app = FastAPI(title="EDR Logs Analysis API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
