@@ -7,6 +7,7 @@ function App() {
   const [datasets, setDatasets] = useState([]);
   const [activeDataset, setActiveDataset] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -31,7 +32,7 @@ function App() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
       <Sidebar
         theme={theme}
         setTheme={setTheme}
@@ -41,6 +42,8 @@ function App() {
         fetchDatasets={fetchDatasets}
         isUploading={isUploading}
         setIsUploading={setIsUploading}
+        isOpen={isSidebarOpen}
+        setIsOpen={setIsSidebarOpen}
       />
       <GraphView
         datasetId={activeDataset}

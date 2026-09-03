@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, X, Check, Database } from 'lucide-react';
+import { Upload, X, Database, Menu } from 'lucide-react';
 
 export default function Sidebar({
   theme,
@@ -9,7 +9,9 @@ export default function Sidebar({
   setActiveDataset,
   fetchDatasets,
   isUploading,
-  setIsUploading
+  setIsUploading,
+  isOpen,
+  setIsOpen
 }) {
 
   const handleFileUpload = async (event) => {
@@ -36,7 +38,7 @@ export default function Sidebar({
       alert('Upload failed due to network error.');
     } finally {
       setIsUploading(false);
-      event.target.value = null; // reset
+      event.target.value = null;
     }
   };
 
@@ -54,20 +56,43 @@ export default function Sidebar({
     }
   };
 
-  return (
-    <div className="w-80 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-colors duration-200">
-      <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          <Database size={24} className="text-blue-500" />
-          EDR Analyzer
-        </h1>
+  if (!isOpen) {
+    return (
+      <div className="w-16 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
         <button
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          title="Toggle Light/Dark Mode"
+          onClick={() => setIsOpen(true)}
+          className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+          title="Open Sidebar"
         >
-          {theme === 'dark' ? '🌞' : '🌙'}
+          <Menu size={24} />
         </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-80 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-300 z-20 shrink-0">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <Database size={24} className="text-blue-500" />
+          <h1 className="text-xl font-bold truncate">EDR Analyzer</h1>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            title="Toggle Light/Dark Mode"
+          >
+            {theme === 'dark' ? '🌞' : '🌙'}
+          </button>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Collapse Sidebar"
+          >
+            <Menu size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="p-4 border-b border-slate-200 dark:border-slate-700">
@@ -83,7 +108,7 @@ export default function Sidebar({
         </label>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-4">
           Datasets
         </h2>
@@ -98,11 +123,11 @@ export default function Sidebar({
                   : 'bg-white border-slate-200 hover:border-blue-300 dark:bg-slate-800 dark:border-slate-700 dark:hover:border-slate-500'
               }`}
             >
-              <div>
-                <p className="font-medium text-sm truncate w-48" title={ds.name}>{ds.name}</p>
+              <div className="overflow-hidden pr-2">
+                <p className="font-medium text-sm truncate" title={ds.name}>{ds.name}</p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{ds.log_count} logs</p>
               </div>
-              <button onClick={(e) => handleDelete(ds.id, e)} className="text-slate-400 hover:text-red-500 transition-colors">
+              <button onClick={(e) => handleDelete(ds.id, e)} className="text-slate-400 hover:text-red-500 transition-colors shrink-0">
                 <X size={16} />
               </button>
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
@@ -14,6 +14,10 @@ export default function GraphView({ datasetId, theme }) {
   const [eventTypes, setEventTypes] = useState({});
   const [users, setUsers] = useState({});
   const [pids, setPids] = useState({});
+
+  // Right Pane Resizing State
+  const [rightPaneWidth, setRightPaneWidth] = useState(320);
+  const isResizing = useRef(false);
 
   useEffect(() => {
     if (!datasetId) return;
@@ -71,13 +75,11 @@ export default function GraphView({ datasetId, theme }) {
         let isVisible = true;
         const d = node.data();
 
-        // Standard filter for process nodes
         if (d.group === 'process') {
           if (d.username && users[d.username] === false) isVisible = false;
           if (d.id && pids[d.id] === false) isVisible = false;
         }
 
-        // Global text search
         if (isVisible && terms.length > 0) {
           const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "")).toLowerCase();
           isVisible = terms.some(term => text.includes(term));
@@ -97,7 +99,6 @@ export default function GraphView({ datasetId, theme }) {
           isVisible = false;
         }
 
-        // If source or target is hidden, edge must be hidden
         if (edge.source().hasClass('hidden') || edge.target().hasClass('hidden')) {
           isVisible = false;
         }
@@ -143,6 +144,44 @@ export default function GraphView({ datasetId, theme }) {
     setSelectedNode(node.data());
   };
 
+  // Resize Handlers
+  const startResizing = useCallback((e) => {
+    isResizing.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    isResizing.current = false;
+    document.body.style.cursor = 'default';
+    document.body.style.userSelect = 'auto';
+
+    // Trigger Cytoscape resize event so canvas redraws to fit new width
+    if (cyRef.current) {
+        cyRef.current.resize();
+    }
+  }, []);
+
+  const resize = useCallback((e) => {
+    if (isResizing.current) {
+      // Calculate width from the right edge of the screen
+      const newWidth = document.body.clientWidth - e.clientX;
+      if (newWidth > 200 && newWidth < 800) {
+        setRightPaneWidth(newWidth);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', resize);
+    window.addEventListener('mouseup', stopResizing);
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [resize, stopResizing]);
+
+
   if (!datasetId) {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-400">
@@ -181,7 +220,7 @@ export default function GraphView({ datasetId, theme }) {
           cy={(cy) => {
             cyRef.current = cy;
             cy.on('tap', 'node', handleNodeClick);
-            cy.on('tap', 'edge', handleNodeClick); // Added edge click
+            cy.on('tap', 'edge', handleNodeClick);
             cy.on('tap', (e) => {
               if (e.target === cy) setSelectedNode(null);
             });
@@ -189,8 +228,17 @@ export default function GraphView({ datasetId, theme }) {
         />
       </div>
 
+      {/* Drag Handle */}
+      <div
+        className="w-1 cursor-col-resize bg-slate-300 dark:bg-slate-600 hover:bg-blue-500 dark:hover:bg-blue-500 z-20 shrink-0"
+        onMouseDown={startResizing}
+      ></div>
+
       {/* Right Pane: Filters OR Details depending on state */}
-      <div className="w-80 bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col h-full overflow-hidden transition-all duration-300 z-10 shrink-0 shadow-lg relative">
+      <div
+        className="bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col h-full overflow-hidden transition-colors duration-300 z-10 shrink-0 shadow-lg relative"
+        style={{ width: rightPaneWidth }}
+      >
 
         {/* Toggle View Header */}
         <div className="flex border-b border-slate-200 dark:border-slate-700">
