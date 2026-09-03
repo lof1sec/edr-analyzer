@@ -152,6 +152,7 @@ export default function GraphView({ datasetId, theme }) {
   }, []);
 
   const stopResizing = useCallback(() => {
+    if (!isResizing.current) return;
     isResizing.current = false;
     document.body.style.cursor = 'default';
     document.body.style.userSelect = 'auto';
@@ -164,9 +165,9 @@ export default function GraphView({ datasetId, theme }) {
 
   const resize = useCallback((e) => {
     if (isResizing.current) {
-      // Calculate width from the right edge of the screen
-      const newWidth = document.body.clientWidth - e.clientX;
-      if (newWidth > 200 && newWidth < 800) {
+      // Use window.innerWidth to accurately gauge distance from the right boundary
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth >= 200 && newWidth <= 800) {
         setRightPaneWidth(newWidth);
       }
     }
@@ -208,7 +209,7 @@ export default function GraphView({ datasetId, theme }) {
   const setAllPids = (val) => setPids(p => Object.keys(p).reduce((acc, k) => ({ ...acc, [k]: val }), {}));
 
   return (
-    <div className="flex-1 flex relative overflow-hidden">
+    <div className="flex-1 flex relative overflow-hidden w-full h-full">
 
       {/* Cytoscape Container */}
       <div className="flex-1 relative bg-slate-100 dark:bg-[#222]">
@@ -230,14 +231,14 @@ export default function GraphView({ datasetId, theme }) {
 
       {/* Drag Handle */}
       <div
-        className="w-1 cursor-col-resize bg-slate-300 dark:bg-slate-600 hover:bg-blue-500 dark:hover:bg-blue-500 z-20 shrink-0"
+        className="w-1 cursor-col-resize bg-slate-300 dark:bg-slate-600 hover:bg-blue-500 dark:hover:bg-blue-500 z-20 shrink-0 h-full"
         onMouseDown={startResizing}
       ></div>
 
       {/* Right Pane: Filters OR Details depending on state */}
       <div
-        className="bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col h-full overflow-hidden transition-colors duration-300 z-10 shrink-0 shadow-lg relative"
-        style={{ width: rightPaneWidth }}
+        className="bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col h-full overflow-hidden transition-colors duration-200 z-10 shrink-0 shadow-lg relative"
+        style={{ width: `${rightPaneWidth}px`, minWidth: `${rightPaneWidth}px`, maxWidth: `${rightPaneWidth}px` }}
       >
 
         {/* Toggle View Header */}
