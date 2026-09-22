@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
@@ -18,6 +18,16 @@ export default function GraphView({ datasetId, theme }) {
   // Right Pane Resizing State
   const [rightPaneWidth, setRightPaneWidth] = useState(320);
   const isResizing = useRef(false);
+
+  const elementsById = useMemo(() => {
+    const map = new Map();
+    for (const el of elements) {
+      if (el.data && el.data.id) {
+        map.set(el.data.id, el);
+      }
+    }
+    return map;
+  }, [elements]);
 
   useEffect(() => {
     if (!datasetId) return;
@@ -342,7 +352,7 @@ export default function GraphView({ datasetId, theme }) {
                 </div>
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
                   {Object.keys(pids).sort().map(pid => {
-                    const node = elements.find(el => el.data && el.data.id === pid);
+                    const node = elementsById.get(pid);
                     const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
                     return (
                       <label key={pid} className="flex items-center gap-2 cursor-pointer text-xs">
