@@ -1,6 +1,6 @@
 // Translate the vis-network physics/colors to cytoscape standard styles.
 
-export const stylesheet = (theme) => [
+export const stylesheet = () => [
   {
     selector: 'node',
     style: {
@@ -9,7 +9,7 @@ export const stylesheet = (theme) => [
       'text-max-width': '150px',
       'font-size': '10px',
       'font-family': 'monospace',
-      'color': theme === 'dark' ? '#fff' : '#000',
+      'color': '#fff',
       'text-valign': 'center',
       'text-halign': 'center',
       'border-width': 2,
@@ -104,10 +104,10 @@ export const stylesheet = (theme) => [
       'curve-style': 'bezier',
       'label': 'data(label)',
       'font-size': '8px',
-      'color': theme === 'dark' ? '#aaa' : '#555',
+      'color': '#aaa',
       'text-rotation': 'autorotate',
       'text-background-opacity': 1,
-      'text-background-color': theme === 'dark' ? '#222' : '#fff',
+      'text-background-color': '#222',
     }
   },
   {

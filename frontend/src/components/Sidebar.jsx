@@ -2,8 +2,6 @@ import React from 'react';
 import { Upload, X, Database, Menu } from 'lucide-react';
 
 export default function Sidebar({
-  theme,
-  setTheme,
   datasets,
   activeDataset,
   setActiveDataset,
@@ -78,13 +76,6 @@ export default function Sidebar({
           <h1 className="text-xl font-bold truncate">EDR Analyzer</h1>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            title="Toggle Light/Dark Mode"
-          >
-            {theme === 'dark' ? '🌞' : '🌙'}
-          </button>
           <button
             onClick={() => setIsOpen(false)}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"

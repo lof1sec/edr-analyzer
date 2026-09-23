@@ -3,7 +3,7 @@ import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
 
-export default function GraphView({ datasetId, theme }) {
+export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -225,7 +225,7 @@ export default function GraphView({ datasetId, theme }) {
       <div className="flex-1 relative bg-slate-100 dark:bg-[#222]">
         <CytoscapeComponent
           elements={elements}
-          stylesheet={stylesheet(theme)}
+          stylesheet={stylesheet()}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
           cy={(cy) => {
