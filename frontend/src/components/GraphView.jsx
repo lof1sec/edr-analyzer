@@ -7,6 +7,7 @@ export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [nodeStyle, setNodeStyle] = useState('detailed');
   const cyRef = useRef(null);
 
   // Filters state
@@ -223,9 +224,19 @@ export default function GraphView({ datasetId }) {
 
       {/* Cytoscape Container */}
       <div className="flex-1 relative bg-slate-100 dark:bg-[#222]">
+        {/* Toolbar */}
+        <div className="absolute top-4 left-4 z-10 flex gap-2">
+          <button
+            onClick={() => setNodeStyle(s => s === 'detailed' ? 'compact' : 'detailed')}
+            className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
+            Node style: {nodeStyle === 'detailed' ? 'Detailed' : 'Compact'}
+          </button>
+        </div>
+
         <CytoscapeComponent
           elements={elements}
-          stylesheet={stylesheet()}
+          stylesheet={stylesheet(nodeStyle)}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
           cy={(cy) => {
