@@ -3,19 +3,10 @@ import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
 
 function App() {
-  const [theme, setTheme] = useState('dark');
   const [datasets, setDatasets] = useState([]);
   const [activeDataset, setActiveDataset] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
 
   const fetchDatasets = async () => {
     try {
@@ -34,8 +25,6 @@ function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
       <Sidebar
-        theme={theme}
-        setTheme={setTheme}
         datasets={datasets}
         activeDataset={activeDataset}
         setActiveDataset={setActiveDataset}
@@ -47,7 +36,6 @@ function App() {
       />
       <GraphView
         datasetId={activeDataset}
-        theme={theme}
       />
     </div>
   );
