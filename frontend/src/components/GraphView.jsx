@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
+import dagre from 'cytoscape-dagre';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
+
+cytoscape.use(dagre);
 
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [nodeStyle, setNodeStyle] = useState('detailed');
+  const [layoutMode, setLayoutMode] = useState('force');
   const cyRef = useRef(null);
 
   // Filters state
@@ -131,24 +134,74 @@ export default function GraphView({ datasetId }) {
     });
   }, [globalSearch, eventTypes, users, pids, elements]);
 
-  const layout = {
-    name: 'cose',
-    idealEdgeLength: 100,
-    nodeOverlap: 20,
-    refresh: 20,
-    fit: true,
-    padding: 30,
-    randomize: false,
-    componentSpacing: 100,
-    nodeRepulsion: 400000,
-    edgeElasticity: 100,
-    nestingFactor: 5,
-    gravity: 80,
-    numIter: 1000,
-    initialTemp: 200,
-    coolingFactor: 0.95,
-    minTemp: 1.0
+  const getLayoutConfig = (mode, cy, selectedNode) => {
+    switch(mode) {
+      case 'tree':
+        return {
+          name: 'dagre',
+          rankDir: 'LR',
+          nodeSep: 80,
+          edgeSep: 40,
+          rankSep: 100,
+          fit: true,
+          padding: 30,
+          animate: true,
+          animationDuration: 300
+        };
+      case 'centered':
+        return {
+          name: 'concentric',
+          fit: true,
+          padding: 30,
+          minNodeSpacing: 100,
+          avoidOverlap: true,
+          animate: true,
+          animationDuration: 300,
+          concentric: (node) => {
+             // Center on selected node if one exists
+             if (selectedNode && selectedNode.id === node.id()) {
+               return 100;
+             }
+             // Otherwise use degree centrality
+             return node.degree();
+          },
+          levelWidth: (nodes) => 1
+        };
+      case 'force':
+      default:
+        return {
+          name: 'cose',
+          idealEdgeLength: 100,
+          nodeOverlap: 20,
+          refresh: 20,
+          fit: true,
+          padding: 30,
+          randomize: false,
+          componentSpacing: 100,
+          nodeRepulsion: 400000,
+          edgeElasticity: 100,
+          nestingFactor: 5,
+          gravity: 80,
+          numIter: 1000,
+          initialTemp: 200,
+          coolingFactor: 0.95,
+          minTemp: 1.0
+        };
+    }
   };
+
+  const layout = getLayoutConfig(layoutMode, cyRef.current, selectedNode);
+
+  const applyLayout = (mode) => {
+    setLayoutMode(mode);
+    if (cyRef.current) {
+        cyRef.current.layout(getLayoutConfig(mode, cyRef.current, selectedNode)).run();
+    }
+  }
+
+  const fitGraph = () => {
+      if(cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden'), 30);
+  }
 
   const handleNodeClick = (e) => {
     const node = e.target;
@@ -224,19 +277,29 @@ export default function GraphView({ datasetId }) {
 
       {/* Cytoscape Container */}
       <div className="flex-1 relative bg-slate-100 dark:bg-[#222]">
-        {/* Toolbar */}
+
+        {/* Layout Toolbar */}
         <div className="absolute top-4 left-4 z-10 flex gap-2">
-          <button
-            onClick={() => setNodeStyle(s => s === 'detailed' ? 'compact' : 'detailed')}
-            className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-          >
-            Node style: {nodeStyle === 'detailed' ? 'Detailed' : 'Compact'}
-          </button>
+            <select
+                value={layoutMode}
+                onChange={(e) => applyLayout(e.target.value)}
+                className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors outline-none"
+            >
+                <option value="force">Layout: Force-directed</option>
+                <option value="tree">Layout: Tree</option>
+                <option value="centered">Layout: Centered</option>
+            </select>
+            <button
+                onClick={fitGraph}
+                className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+            >
+                Fit Graph
+            </button>
         </div>
 
         <CytoscapeComponent
           elements={elements}
-          stylesheet={stylesheet(nodeStyle)}
+          stylesheet={stylesheet()}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
           cy={(cy) => {

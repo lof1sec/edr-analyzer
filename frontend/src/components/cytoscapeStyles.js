@@ -1,18 +1,19 @@
 // Translate the vis-network physics/colors to cytoscape standard styles.
 
-export const stylesheet = (nodeStyle = 'detailed') => [
+export const stylesheet = () => [
   {
     selector: 'node',
     style: {
       'label': 'data(label)',
-      'text-wrap': nodeStyle === 'compact' ? 'ellipsis' : 'wrap',
-      'text-max-width': nodeStyle === 'compact' ? '40px' : '150px',
-      'font-size': nodeStyle === 'compact' ? '6px' : '10px',
+      'text-wrap': 'wrap',
+      'text-max-width': '150px',
+      'font-size': '10px',
       'font-family': 'monospace',
       'color': '#fff',
       'text-valign': 'center',
       'text-halign': 'center',
-      'border-width': nodeStyle === 'compact' ? 1 : 2,
+      'border-width': 2,
+      'min-zoomed-font-size': 6,
     }
   },
   {
@@ -21,8 +22,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'round-rectangle',
       'background-color': '#4d0000',
       'border-color': '#ff4d4d',
-      'width': nodeStyle === 'compact' ? '40px' : '120px',
-      'height': nodeStyle === 'compact' ? '20px' : '60px',
+      'width': '120px',
+      'height': '60px',
       'color': '#fff'
     }
   },
@@ -32,8 +33,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'rectangle',
       'background-color': '#00264d',
       'border-color': '#4da6ff',
-      'width': nodeStyle === 'compact' ? '30px' : '100px',
-      'height': nodeStyle === 'compact' ? '12px' : '40px',
+      'width': '100px',
+      'height': '40px',
       'color': '#fff'
     }
   },
@@ -43,8 +44,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'hexagon',
       'background-color': '#4d0099',
       'border-color': '#b366ff',
-      'width': nodeStyle === 'compact' ? '30px' : '90px',
-      'height': nodeStyle === 'compact' ? '16px' : '50px',
+      'width': '90px',
+      'height': '50px',
       'color': '#fff'
     }
   },
@@ -54,8 +55,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'rectangle',
       'background-color': '#804000',
       'border-color': '#ff9933',
-      'width': nodeStyle === 'compact' ? '30px' : '100px',
-      'height': nodeStyle === 'compact' ? '12px' : '40px',
+      'width': '100px',
+      'height': '40px',
       'color': '#fff'
     }
   },
@@ -65,8 +66,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'rectangle',
       'background-color': '#003333',
       'border-color': '#00ffff',
-      'width': nodeStyle === 'compact' ? '30px' : '100px',
-      'height': nodeStyle === 'compact' ? '12px' : '40px',
+      'width': '100px',
+      'height': '40px',
       'color': '#fff'
     }
   },
@@ -77,8 +78,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'background-color': '#332b00',
       'border-color': '#ffcc00',
       'border-width': 1,
-      'width': nodeStyle === 'compact' ? '50px' : '150px',
-      'height': nodeStyle === 'compact' ? '16px' : '50px',
+      'width': '150px',
+      'height': '50px',
       'color': '#fff'
     }
   },
@@ -88,9 +89,9 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'shape': 'star',
       'background-color': '#b30000',
       'border-color': '#ff0000',
-      'border-width': nodeStyle === 'compact' ? 1 : 3,
-      'width': nodeStyle === 'compact' ? '25px' : '80px',
-      'height': nodeStyle === 'compact' ? '25px' : '80px',
+      'border-width': 3,
+      'width': '80px',
+      'height': '80px',
       'color': '#fff'
     }
   },
@@ -108,6 +109,8 @@ export const stylesheet = (nodeStyle = 'detailed') => [
       'text-rotation': 'autorotate',
       'text-background-opacity': 1,
       'text-background-color': '#222',
+      'min-zoomed-font-size': 5,
+      'control-point-step-size': 40,
     }
   },
   {
