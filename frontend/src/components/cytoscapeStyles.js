@@ -6,7 +6,7 @@ export const stylesheet = () => [
     style: {
       'label': 'data(label)',
       'text-wrap': 'wrap',
-      'text-max-width': '150px',
+      'text-max-width': '200px',
       'font-size': '10px',
       'font-family': 'monospace',
       'color': '#fff',
@@ -14,6 +14,9 @@ export const stylesheet = () => [
       'text-halign': 'center',
       'border-width': 2,
       'min-zoomed-font-size': 6,
+      'width': 'label',
+      'height': 'label',
+      'padding': '12px',
     }
   },
   {
@@ -22,8 +25,6 @@ export const stylesheet = () => [
       'shape': 'round-rectangle',
       'background-color': '#4d0000',
       'border-color': '#ff4d4d',
-      'width': '120px',
-      'height': '60px',
       'color': '#fff'
     }
   },
@@ -33,8 +34,6 @@ export const stylesheet = () => [
       'shape': 'rectangle',
       'background-color': '#00264d',
       'border-color': '#4da6ff',
-      'width': '100px',
-      'height': '40px',
       'color': '#fff'
     }
   },
@@ -44,8 +43,6 @@ export const stylesheet = () => [
       'shape': 'hexagon',
       'background-color': '#4d0099',
       'border-color': '#b366ff',
-      'width': '90px',
-      'height': '50px',
       'color': '#fff'
     }
   },
@@ -55,8 +52,6 @@ export const stylesheet = () => [
       'shape': 'rectangle',
       'background-color': '#804000',
       'border-color': '#ff9933',
-      'width': '100px',
-      'height': '40px',
       'color': '#fff'
     }
   },
@@ -66,8 +61,6 @@ export const stylesheet = () => [
       'shape': 'rectangle',
       'background-color': '#003333',
       'border-color': '#00ffff',
-      'width': '100px',
-      'height': '40px',
       'color': '#fff'
     }
   },
@@ -78,8 +71,6 @@ export const stylesheet = () => [
       'background-color': '#332b00',
       'border-color': '#ffcc00',
       'border-width': 1,
-      'width': '150px',
-      'height': '50px',
       'color': '#fff'
     }
   },
@@ -90,8 +81,6 @@ export const stylesheet = () => [
       'background-color': '#b30000',
       'border-color': '#ff0000',
       'border-width': 3,
-      'width': '80px',
-      'height': '80px',
       'color': '#fff'
     }
   },
