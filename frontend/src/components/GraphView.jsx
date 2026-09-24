@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
-import cytoscapeDagre from 'cytoscape-dagre';
-const dagre = cytoscapeDagre.default || cytoscapeDagre;
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
-
-cytoscape.use(dagre);
 
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
@@ -139,15 +135,17 @@ export default function GraphView({ datasetId }) {
     switch(mode) {
       case 'tree':
         return {
-          name: 'dagre',
-          rankDir: 'LR',
-          nodeSep: 80,
-          edgeSep: 40,
-          rankSep: 100,
+          name: 'breadthfirst',
+          directed: true,
+          spacingFactor: 1.5,
           fit: true,
           padding: 30,
           animate: true,
-          animationDuration: 300
+          animationDuration: 300,
+          transform: function (node, position) {
+            // Flip x and y to create a Left-to-Right tree instead of Top-to-Bottom
+            return { x: position.y, y: position.x };
+          }
         };
       case 'centered':
         return {

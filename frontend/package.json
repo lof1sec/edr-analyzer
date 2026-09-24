@@ -12,7 +12,6 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "cytoscape": "^3.34.2",
-    "cytoscape-dagre": "^2.3.2",
     "lucide-react": "^1.39.0",
     "react": "^19.2.8",
     "react-cytoscapejs": "^2.0.0",
