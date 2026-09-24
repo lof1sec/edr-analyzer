@@ -9,6 +9,7 @@ export default function GraphView({ datasetId }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [layoutMode, setLayoutMode] = useState('force');
   const cyRef = useRef(null);
+  const initialPositions = useRef({});
 
   // Filters state
   const [globalSearch, setGlobalSearch] = useState('');
@@ -32,6 +33,8 @@ export default function GraphView({ datasetId }) {
 
   useEffect(() => {
     if (!datasetId) return;
+    initialPositions.current = {}; // Reset positions on new dataset
+    setLayoutMode('force');
     const fetchGraph = async () => {
       setLoading(true);
       try {
@@ -168,6 +171,18 @@ export default function GraphView({ datasetId }) {
         };
       case 'force':
       default:
+        // If we already saved the initial force-directed positions, snap back to them immediately
+        if (Object.keys(initialPositions.current).length > 0) {
+           return {
+             name: 'preset',
+             positions: initialPositions.current,
+             fit: true,
+             padding: 30,
+             animate: true,
+             animationDuration: 300
+           };
+        }
+
         return {
           name: 'cose',
           idealEdgeLength: 100,
@@ -303,6 +318,17 @@ export default function GraphView({ datasetId }) {
           style={{ width: '100%', height: '100%' }}
           cy={(cy) => {
             cyRef.current = cy;
+
+            // Try to capture initial layout positions when the physics simulation stops.
+            // We only save it once per dataset so we can snap back to it later.
+            cy.on('layoutstop', () => {
+              if (Object.keys(initialPositions.current).length === 0 && layoutMode === 'force') {
+                cy.nodes().forEach(node => {
+                  initialPositions.current[node.id()] = { ...node.position() };
+                });
+              }
+            });
+
             cy.on('tap', 'node', handleNodeClick);
             cy.on('tap', 'edge', handleNodeClick);
             cy.on('tap', (e) => {
