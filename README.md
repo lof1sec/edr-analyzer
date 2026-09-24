@@ -10,8 +10,12 @@ A full-stack web application designed to analyze Endpoint Detection and Response
   - Global Text Search
   - Event Types (e.g., `ProcessCreated`, `NetworkConnectionEvents`)
   - Usernames
-- **Detailed Node Inspection:** Click on any node (Process, File, Registry, Network, Alert) to view the raw log details and observed actions in a dedicated detail panel.
-- **Dark/Light Mode:** First-class support for both themes to ensure comfortable analysis in any environment.
+  - Process IDs (PIDs)
+- **Advanced Graph Layouts:** A dedicated toolbar lets you instantly switch the visualization engine between:
+  - **Force-directed:** A physics-based cluster simulation (default).
+  - **Tree:** A hierarchical left-to-right chain mapping parent/child process execution.
+  - **Centered:** Focuses on the currently selected node and clusters related artifacts around it.
+- **Detailed Node Inspection:** Click on any node (Process, File, Registry, Network, Alert) to view the raw log details and observed actions in the dedicated right-hand side details panel.
 - **Scalable Architecture:** Uses PostgreSQL `JSONB` columns to flexibly adapt to future log formats (like CrowdStrike Falcon).
 
 ## Tech Stack
@@ -75,7 +79,8 @@ docker-compose up -d --build
 
 ### 4. Inspecting Details
 - Click on any node in the graph.
-- A popup panel will appear in the bottom-left corner containing the raw metadata associated with that node, including Command Lines, Hashes, and Process Details.
+- The right-hand pane will switch to the **Node Details** view, showing the metadata associated with that node, including Command Lines, Hashes, and raw JSON logs.
+- You can toggle the right-hand pane open or closed using the Filter/Close icons.
 
 ---
 

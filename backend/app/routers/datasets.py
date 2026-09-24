@@ -10,9 +10,12 @@ from app.schemas import DatasetResponse
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
 @router.post("/upload")
-async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    is_csv = file.filename.lower().endswith('.csv')
+    is_json = file.filename.lower().endswith(('.json', '.jsonl'))
+
+    if not (is_csv or is_json):
+        raise HTTPException(status_code=400, detail="Only CSV, JSON, or JSONL files are allowed")
 
     contents = await file.read()
     try:
@@ -26,20 +29,51 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
     db.commit()
     db.refresh(dataset)
 
-    # Parse CSV and store to DB
-    csv_reader = csv.DictReader(StringIO(text))
-
     log_events = []
-    for row in csv_reader:
-        # ActionType is the common key for defender logs, fallback to unknown
-        event_type = row.get("ActionType", "Unknown")
 
-        log_event = LogEvent(
-            dataset_id=dataset.id,
-            event_type=event_type,
-            data=row
-        )
-        log_events.append(log_event)
+    if is_csv:
+        # Parse CSV (Typically MS Defender)
+        csv_reader = csv.DictReader(StringIO(text))
+        for row in csv_reader:
+            event_type = row.get("ActionType", "Unknown")
+            log_events.append(LogEvent(dataset_id=dataset.id, event_type=event_type, data=row))
+    else:
+        # Parse JSON/JSONL (Typically CrowdStrike Falcon)
+        lines = text.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Handle if file is a single JSON array instead of JSONL
+            if line == '[' or line == ']' or line == '},' or line == '{':
+                continue
+
+            try:
+                # Remove trailing comma if present in formatted json array
+                if line.endswith(','):
+                    line = line[:-1]
+                row = json.loads(line)
+
+                # Falcon uses #event_simpleName
+                event_type = row.get("#event_simpleName", "Unknown")
+                log_events.append(LogEvent(dataset_id=dataset.id, event_type=event_type, data=row))
+            except json.JSONDecodeError:
+                # Attempt to parse entire file as one JSON array if line-by-line fails
+                pass
+
+        if not log_events:
+            try:
+                data_array = json.loads(text)
+                if isinstance(data_array, list):
+                    for row in data_array:
+                        event_type = row.get("#event_simpleName", "Unknown")
+                        log_events.append(LogEvent(dataset_id=dataset.id, event_type=event_type, data=row))
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Failed to parse JSON file")
+
+    if not log_events:
+        raise HTTPException(status_code=400, detail="No valid log events found in file")
 
     db.bulk_save_objects(log_events)
     db.commit()
