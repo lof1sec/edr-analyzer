@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
-import dagre from 'cytoscape-dagre';
+import cytoscapeDagre from 'cytoscape-dagre';
+const dagre = cytoscapeDagre.default || cytoscapeDagre;
 import CytoscapeComponent from 'react-cytoscapejs';
 import { stylesheet } from './cytoscapeStyles';
 
