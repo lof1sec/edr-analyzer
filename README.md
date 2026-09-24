@@ -80,7 +80,7 @@ docker-compose up -d --build
 ### 4. Inspecting Details
 - Click on any node in the graph.
 - The right-hand pane will switch to the **Node Details** view, showing the metadata associated with that node, including Command Lines, Hashes, and raw JSON logs.
-- You can drag the border of the right-hand pane to resize it for easier reading of large logs.
+- You can toggle the right-hand pane open or closed using the Filter/Close icons.
 
 ---
 

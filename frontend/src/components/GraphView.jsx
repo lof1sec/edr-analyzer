@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
+import { Filter, X } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
 
 export default function GraphView({ datasetId }) {
@@ -17,9 +18,8 @@ export default function GraphView({ datasetId }) {
   const [users, setUsers] = useState({});
   const [pids, setPids] = useState({});
 
-  // Right Pane Resizing State
-  const [rightPaneWidth, setRightPaneWidth] = useState(320);
-  const isResizing = useRef(false);
+  // Right Pane Toggle State
+  const [isRightPaneOpen, setIsRightPaneOpen] = useState(true);
 
   const elementsById = useMemo(() => {
     const map = new Map();
@@ -220,46 +220,29 @@ export default function GraphView({ datasetId }) {
   const handleNodeClick = (e) => {
     const node = e.target;
     setSelectedNode(node.data());
+    if (!isRightPaneOpen) {
+      setIsRightPaneOpen(true);
+    }
   };
 
-  // Resize Handlers
-  const startResizing = useCallback((e) => {
-    isResizing.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }, []);
-
-  const stopResizing = useCallback(() => {
-    if (!isResizing.current) return;
-    isResizing.current = false;
-    document.body.style.cursor = 'default';
-    document.body.style.userSelect = 'auto';
-
-    // Trigger Cytoscape resize event so canvas redraws to fit new width
-    if (cyRef.current) {
-        cyRef.current.resize();
-    }
-  }, []);
-
-  const resize = useCallback((e) => {
-    if (isResizing.current) {
-      // Use window.innerWidth to accurately gauge distance from the right boundary
-      const newWidth = window.innerWidth - e.clientX;
-      if (newWidth >= 200 && newWidth <= 800) {
-        setRightPaneWidth(newWidth);
-      }
-    }
-  }, []);
-
+  // Resize cytoscape on pane toggle so canvas redraws to fit new width
   useEffect(() => {
-    window.addEventListener('mousemove', resize);
-    window.addEventListener('mouseup', stopResizing);
-    return () => {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
-    };
-  }, [resize, stopResizing]);
+    const timeoutId = setTimeout(() => {
+      if (cyRef.current) cyRef.current.resize();
+    }, 300); // Wait for CSS transition to finish
+    return () => clearTimeout(timeoutId);
+  }, [isRightPaneOpen]);
 
+  // Observer to auto resize cytoscape when container size changes
+  useEffect(() => {
+    const container = document.getElementById('cy-container');
+    if (!container) return;
+    const resizeObserver = new ResizeObserver(() => {
+      if (cyRef.current) cyRef.current.resize();
+    });
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }); // Run on every render/layout change to attach properly when datasetId is loaded
 
   if (!datasetId) {
     return (
@@ -290,7 +273,7 @@ export default function GraphView({ datasetId }) {
     <div className="flex-1 flex relative overflow-hidden w-full h-full">
 
       {/* Cytoscape Container */}
-      <div className="flex-1 relative bg-slate-100 dark:bg-[#222]">
+      <div id="cy-container" className="flex-1 min-w-0 relative bg-slate-100 dark:bg-[#222]">
 
         {/* Layout Toolbar */}
         <div className="absolute top-4 left-4 z-10 flex gap-2">
@@ -338,62 +321,73 @@ export default function GraphView({ datasetId }) {
         />
       </div>
 
-      {/* Drag Handle */}
-      <div
-        className="w-1 cursor-col-resize bg-slate-300 dark:bg-slate-600 hover:bg-blue-500 dark:hover:bg-blue-500 z-20 shrink-0 h-full"
-        onMouseDown={startResizing}
-      ></div>
-
       {/* Right Pane: Filters OR Details depending on state */}
-      <div
-        className="bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col h-full overflow-hidden transition-colors duration-200 z-10 shrink-0 shadow-lg relative"
-        style={{ width: `${rightPaneWidth}px`, minWidth: `${rightPaneWidth}px`, maxWidth: `${rightPaneWidth}px` }}
-      >
-
-        {/* Toggle View Header */}
-        <div className="flex border-b border-slate-200 dark:border-slate-700">
-           <button
-             className={`flex-1 p-3 text-sm font-bold transition-colors ${!selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-             onClick={() => setSelectedNode(null)}
-           >
-             Filters
-           </button>
-           <button
-             className={`flex-1 p-3 text-sm font-bold transition-colors ${selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-           >
-             Node Details
-           </button>
+      {!isRightPaneOpen ? (
+        <div className="w-16 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
+          <button
+            onClick={() => setIsRightPaneOpen(true)}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Open Filters & Details"
+          >
+            <Filter size={24} />
+          </button>
         </div>
+      ) : (
+        <div
+          className="w-80 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden transition-all duration-300 z-10 shrink-0 shadow-lg relative"
+        >
 
-        {/* Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          {/* Toggle View Header */}
+          <div className="flex border-b border-slate-200 dark:border-slate-700">
+             <button
+               className={`flex-1 p-3 text-sm font-bold transition-colors ${!selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+               onClick={() => setSelectedNode(null)}
+             >
+               Filters
+             </button>
+             <button
+               className={`flex-1 p-3 text-sm font-bold transition-colors ${selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+             >
+               Node Details
+             </button>
+             <button
+               onClick={() => setIsRightPaneOpen(false)}
+               className="p-3 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors border-l border-slate-200 dark:border-slate-700 shrink-0"
+               title="Collapse Pane"
+             >
+               <X size={20} />
+             </button>
+          </div>
 
-          {/* Details Pane Content */}
-          {selectedNode ? (
-            <div className="space-y-4">
-              <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words">
-                {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
-              </h4>
+          {/* Scrollable Content Area */}
+          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
 
-              <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
-                <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>
-              </div>
+            {/* Details Pane Content */}
+            {selectedNode ? (
+              <div className="space-y-4">
+                <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words">
+                  {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
+                </h4>
 
-              {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
-                <div className="mt-4">
-                  <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
-                  {selectedNode.raw_logs.map((log, idx) => (
-                    <div key={idx} className="mb-4 bg-slate-100 dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono overflow-x-auto text-slate-800 dark:text-slate-200">
-                      <pre>{JSON.stringify(log, null, 2)}</pre>
-                    </div>
-                  ))}
+                <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
+                  <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>
                 </div>
-              )}
-            </div>
-          ) : (
 
-          /* Filters Pane Content */
-            <div className="space-y-6 text-sm">
+                {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
+                  <div className="mt-4">
+                    <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
+                    {selectedNode.raw_logs.map((log, idx) => (
+                      <div key={idx} className="mb-4 bg-slate-100 dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono overflow-x-auto text-slate-800 dark:text-slate-200">
+                        <pre>{JSON.stringify(log, null, 2)}</pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+
+            /* Filters Pane Content */
+              <div className="space-y-6 text-sm">
               <div>
                 <label className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
                 <input
@@ -463,9 +457,10 @@ export default function GraphView({ datasetId }) {
                 </div>
               </div>
             </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
