@@ -352,7 +352,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                         task_name = event.get("TaskName", "Unknown_Task")
                         task_xml = event.get("TaskXml", "")
                         node_id = f"task_{abs(hash(task_name))}"
-                        display_label = f"Task:\n{task_name.replace('\\', '/').split('/')[-1]}"
+                        clean_task_name = task_name.replace('\\', '/').split('/')[-1]
+                        display_label = f"Task:\n{clean_task_name}"
 
                         full_info = f"[{evt_type}]\nTask: {task_name}\nTactic: {tactic}\nTechnique: {technique}\n\nXML Snippet:\n{task_xml[:800]}..."
                         add_or_update_artifact_node(node_id, display_label, full_info, "commandline", event)
