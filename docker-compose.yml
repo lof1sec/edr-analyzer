@@ -21,7 +21,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/edr_logs
+      - DATABASE_URL=postgresql+psycopg://user:password@db:5432/edr_logs
       - PYTHONPATH=/app
     depends_on:
       db:
