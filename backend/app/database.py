@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/edr_logs")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://user:password@db:5432/edr_logs")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

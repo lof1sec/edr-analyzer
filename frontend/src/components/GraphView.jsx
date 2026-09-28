@@ -242,7 +242,7 @@ export default function GraphView({ datasetId }) {
     });
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }); // Run on every render/layout change to attach properly when datasetId is loaded
+  }, [datasetId, isRightPaneOpen]);
 
   if (!datasetId) {
     return (
