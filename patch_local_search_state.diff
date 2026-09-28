@@ -1,0 +1,18 @@
+<<<<<<< SEARCH
+  // Filters state
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [eventTypes, setEventTypes] = useState({});
+  const [users, setUsers] = useState({});
+  const [pids, setPids] = useState({});
+=======
+  // Filters state
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [eventTypes, setEventTypes] = useState({});
+  const [users, setUsers] = useState({});
+  const [pids, setPids] = useState({});
+
+  // Local Filter Searches
+  const [eventTypeSearch, setEventTypeSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+  const [pidSearch, setPidSearch] = useState('');
+>>>>>>> REPLACE

@@ -34,7 +34,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
     edges_list = []
 
     # Helper for adding/updating process nodes
-    def get_or_create_process_node(pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
+    def get_or_create_process_node(pid, name=None, username=None, evt_type=None, raw_event=None):
         if not pid: return
         pid = str(pid)
 
@@ -43,15 +43,11 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
         if username:
             icon = "💻" if str(username).endswith("$") else "👤"
             label += f"\n{icon} {username}"
-        if hostname:
-            label += f"\n🖥️ {hostname}"
 
         title = f"Process Name: {display_name}\nPID: {pid}"
         if username:
             icon = "💻" if str(username).endswith("$") else "👤"
             title += f"\nUser: {icon} {username}"
-        if hostname:
-            title += f"\nHost: 🖥️ {hostname}"
 
         if pid not in nodes_dict:
             actions_list = [evt_type] if evt_type else []
@@ -64,7 +60,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 "group": "process",
                 "title": title,
                 "username": username,
-                "hostname": hostname,
                 "process_name": name,
                 "actions": actions_list,
                 "raw_logs": [raw_event] if raw_event else []
@@ -73,7 +68,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             node = nodes_dict[pid]
             current_label = node.get("label", "")
             current_username = node.get("username")
-            current_hostname = node.get("hostname")
             current_title = node.get("title", "")
             current_name = node.get("process_name")
             actions_list = node.get("actions", [])
@@ -109,18 +103,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                         node["title"] = parts[0] + f"\nUser: {icon} {username}\n\nObserved Actions:" + parts[1]
                     else:
                         node["title"] += f"\nUser: {icon} {username}"
-                current_title = node["title"]
-
-            if hostname and not current_hostname:
-                node["hostname"] = hostname
-                if "🖥️" not in node["label"]:
-                    node["label"] += f"\n🖥️ {hostname}"
-                if "Host:" not in current_title:
-                    parts = current_title.split('\n\nObserved Actions:')
-                    if len(parts) > 1:
-                        node["title"] = parts[0] + f"\nHost: 🖥️ {hostname}\n\nObserved Actions:" + parts[1]
-                    else:
-                        node["title"] += f"\nHost: 🖥️ {hostname}"
 
     # Helper for adding/updating artifact nodes
     def add_or_update_artifact_node(node_id, label, new_details, group, raw_event=None):
@@ -176,7 +158,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             target_name = event.get("FileName") or event.get("TargetFileName", "")
 
             username = event.get("UserName", "Unknown")
-            hostname = event.get("ComputerName", "")
             if not actor_id and target_id:
                actor_id = target_id
         else:
@@ -188,7 +169,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             domain = event.get("AccountDomain", "")
             user = event.get("AccountName", "Unknown")
             username = f"{domain}\\{user}" if domain and user != "Unknown" else user
-            hostname = event.get("DeviceName", "")
 
         # --- FALCON EVENT LOGIC ---
         if is_falcon:
@@ -201,13 +181,13 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 image_file = event.get("ImageFileName", "Unknown Process").split('\\')[-1]
 
                 if parent_id and target_id:
-                    get_or_create_process_node(parent_id, event.get("ParentBaseFileName"), username, hostname, evt_type=evt_type, raw_event=event)
-                    get_or_create_process_node(target_id, image_file, username, hostname, evt_type, raw_event=event)
+                    get_or_create_process_node(parent_id, event.get("ParentBaseFileName"), evt_type=evt_type, raw_event=event)
+                    get_or_create_process_node(target_id, image_file, username, evt_type, raw_event=event)
 
                     add_edge(parent_id, target_id, "Spawns", "#ff4d4d", evt_type, raw_event=event)
 
                     if source_id and source_id != parent_id:
-                        get_or_create_process_node(source_id, None, username, hostname, evt_type=evt_type, raw_event=event)
+                        get_or_create_process_node(source_id, evt_type=evt_type, raw_event=event)
                         add_edge(source_id, target_id, "True Source", "#ff33cc", evt_type, dashed=True, raw_event=event)
 
                     if cmdline and cmdline != "No CommandLine":
@@ -226,7 +206,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 actor_ident = context_id or target_id
 
                 if actor_ident:
-                    get_or_create_process_node(actor_ident, base_file, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, base_file, username, evt_type, event)
 
                     ancestry_text = (
                         f"[{evt_type}]\n"
@@ -242,7 +222,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             elif evt_type == "AssociateIndicator":
                 actor_ident = target_id or context_id
                 if actor_ident:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     detect_name = event.get("DetectName", "Unknown Detection")
                     severity = event.get("DetectSeverity", "0")
@@ -263,7 +243,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             elif evt_type in ["UserLogon", "UserIdentity", "IoSessionLoggedOn"]:
                 actor_ident = context_id or source_id
                 if actor_ident:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     logon_type = event.get("LogonType", "Unknown")
                     domain = event.get("LogonDomain", "")
@@ -300,7 +280,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 file_name = event.get("TargetFileName") or event.get("FileName", "")
 
                 if context_id and file_name:
-                    get_or_create_process_node(context_id, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(context_id, actor_name, username, evt_type, event)
 
                     clean_path = file_name.replace('\\', '/')
                     short_name = clean_path.rstrip('/').split('/')[-1]
@@ -324,7 +304,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 file_name = event.get("TargetFileName") or event.get("FileName", "")
                 actor_ident = context_id or source_id
                 if actor_ident and file_name:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     clean_path = file_name.replace('\\', '/')
                     short_name = clean_path.rstrip('/').split('/')[-1]
@@ -343,7 +323,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             elif evt_type == "SuspiciousCreateSymbolicLink":
                 actor_ident = context_id or source_id
                 if actor_ident:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     symlink = event.get("SymbolicLinkName", "")
                     target = event.get("SymbolicLinkTarget", "")
@@ -363,7 +343,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             elif evt_type in ["ScheduledTaskModified", "FirewallSetRule", "FirewallDeleteRule"]:
                 actor_ident = event.get("RpcClientProcessId") or context_id or source_id
                 if actor_ident:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     tactic = event.get("Tactic", "N/A")
                     technique = event.get("Technique", "N/A")
@@ -397,7 +377,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 actor_ident = context_id or source_id
                 if actor_ident and driver_path:
                     short_driver = driver_path.split('\\')[-1]
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     sha256 = event.get("SHA256HashData", "N/A")
                     company = event.get("CompanyName", "Unknown Company")
@@ -415,7 +395,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     raw_reg = reg_value if reg_value else reg_key.split('\\')[-1]
                     display_reg = raw_reg[:50] + "..." if len(raw_reg) > 50 else raw_reg
 
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
                     full_reg_info = f"[{evt_type}]\nKey: {reg_key}\nValue: {reg_value}"
 
                     add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
@@ -427,7 +407,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 actor_ident = context_id or source_id
 
                 if actor_ident and (remote_ip or domain):
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
 
                     if evt_type == "DnsRequest":
                         dns_node_id = f"dns_{domain}"
@@ -492,7 +472,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 cmd_history = event.get("CommandHistory", "")
                 actor_ident = target_id or context_id
                 if actor_ident and cmd_history:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
                     cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
                     wrapped_cmd = textwrap.fill(cmd_history, width=60)
 
@@ -502,8 +482,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             else:
                 actor_ident = context_id or source_id or parent_id
                 if actor_ident and target_id and actor_ident != target_id:
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
-                    get_or_create_process_node(target_id, target_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, evt_type, event)
+                    get_or_create_process_node(target_id, target_name, username, evt_type, event)
                     add_edge(actor_ident, target_id, evt_type, "#a6a6a6", evt_type, raw_event=event)
             continue
 
@@ -511,8 +491,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
         if evt_type == "ProcessCreated":
             cmdline = event.get("ProcessCommandLine", "No CommandLine")
             if actor_id and target_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
-                get_or_create_process_node(target_id, target_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
+                get_or_create_process_node(target_id, target_name, username, evt_type, event)
                 add_edge(actor_id, target_id, "Spawns", "#ff4d4d", evt_type, raw_event=event)
 
                 if cmdline and cmdline != "No CommandLine":
@@ -525,7 +505,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             add_fields = get_additional_fields_dict(event)
             ps_command = add_fields.get("Command") or str(event.get("AdditionalFields", ""))
             if actor_id and ps_command:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 cmd_node_id = f"pscmd_{actor_id}_{hash_str(ps_command)}"
                 wrapped_cmd = textwrap.fill(ps_command, width=60)
                 add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}", "commandline", event)
@@ -535,7 +515,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             add_fields = get_additional_fields_dict(event)
             module_name = add_fields.get("ModuleILPathOrName", "Unbacked CLR Assembly")
             if actor_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 clr_node_id = f"clr_{actor_id}_{hash_str(module_name)}"
                 display_clr = f"Unbacked CLR\n{module_name[:30]}"
                 clr_info = f"[{evt_type}]\nAssembly / Module Name: {module_name}\nDetails:\n{event.get('AdditionalFields', '')}"
@@ -547,7 +527,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             search_filter = add_fields.get("SearchFilter", "Unknown Filter")
             attributes = str(add_fields.get("AttributeList", ""))
             if actor_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 ldap_node_id = f"ldap_{actor_id}_{hash_str(search_filter)}"
                 display_ldap = f"LDAP Search\n{search_filter[:30]}..." if len(search_filter) > 30 else f"LDAP Search\n{search_filter}"
                 ldap_info = f"[{evt_type}]\nFilter: {search_filter}\nAttributes: {attributes}"
@@ -560,7 +540,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             driver_name = add_fields.get("DriverName", "Unknown Driver")
             pnp_actor = actor_id if actor_id else "SYSTEM_PNP"
             pnp_actor_name = actor_name if actor_id else "Plug and Play Manager"
-            get_or_create_process_node(pnp_actor, pnp_actor_name, username, hostname, evt_type, event)
+            get_or_create_process_node(pnp_actor, pnp_actor_name, username, evt_type, event)
             pnp_node_id = f"pnp_{hash_str(device_id)}"
             display_pnp = f"PnP Device\n{driver_name}"
             pnp_info = f"[{evt_type}]\nDevice ID: {device_id}\nDriver: {driver_name}\nDetails: {event.get('AdditionalFields', '')}"
@@ -569,7 +549,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
 
         elif evt_type == "GetClipboardData":
             if actor_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 clip_node_id = f"clip_{actor_id}"
                 clip_info = f"[{evt_type}]\nProcess accessed system clipboard contents."
                 add_or_update_artifact_node(clip_node_id, "📋 Clipboard Data", clip_info, "commandline", event)
@@ -580,7 +560,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             client_machine = add_fields.get("ClientMachine", "Local")
             wmi_actor = actor_id if actor_id else "WMI_Subsystem"
             wmi_actor_name = actor_name if actor_id else "WMI Engine"
-            get_or_create_process_node(wmi_actor, wmi_actor_name, username, hostname, evt_type, event)
+            get_or_create_process_node(wmi_actor, wmi_actor_name, username, evt_type, event)
             wmi_node_id = f"wmi_query_{hash_str(str(add_fields))}"
             wmi_info = f"[{evt_type}]\nClient Machine: {client_machine}\nDetails:\n{event.get('AdditionalFields', '')}"
             add_or_update_artifact_node(wmi_node_id, f"WMI Query\n({client_machine})", wmi_info, "commandline", event)
@@ -591,7 +571,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             pipe_name = add_fields.get("PipeName")
             file_op = add_fields.get("FileOperation", "NamedPipeEvent")
             if actor_id and pipe_name:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 display_pipe = pipe_name.split('\\')[-1] if '\\' in pipe_name else pipe_name
                 if len(display_pipe) > 50: display_pipe = display_pipe[:50] + "..."
                 pipe_info = f"[{evt_type}]\nPipe Name: {pipe_name}\nOperation: {file_op}"
@@ -604,7 +584,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             master_key_guid = add_fields.get("MasterKeyGUID", "Unknown GUID")
             flags = add_fields.get("Flags", "")
             if actor_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 dpapi_node_id = f"dpapi_{master_key_guid}"
                 display_name = f"DPAPI\n{operation_type}"
                 dpapi_info = f"[{evt_type}]\nOperation: {operation_type}\nMasterKey GUID: {master_key_guid}\nFlags: {flags}"
@@ -614,7 +594,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
         elif evt_type == "BrowserLaunchedToOpenUrl":
             launched_url = event.get("RemoteUrl", "")
             if actor_id and launched_url:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 url_node_id = f"url_{hash_str(launched_url)}"
                 display_url = launched_url[:50] + "..." if len(launched_url) > 50 else launched_url
                 url_info = f"[{evt_type}]\nLaunched URL/URI:\n{launched_url}"
@@ -628,7 +608,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             if isinstance(add_fields_raw, dict): add_fields_raw = json.dumps(add_fields_raw)
             av_actor = actor_id if actor_id else "SYSTEM_AV"
             av_actor_name = actor_name if actor_id else "Windows Defender Engine"
-            get_or_create_process_node(av_actor, av_actor_name, username, hostname, evt_type, event)
+            get_or_create_process_node(av_actor, av_actor_name, username, evt_type, event)
             alert_node_id = f"av_alert_{file_name}_{sha1}"
             display_name = f"⚠️ AV ALERT\n{file_name[:25]}"
             alert_info = f"[{evt_type}]\nTarget Payload: {file_name}\nSHA1: {sha1}\nDetails: {add_fields_raw}"
@@ -640,7 +620,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             file_name = event.get("FileName", "")
             full_path = folder_path if folder_path else file_name
             if actor_id and full_path:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 display_file = file_name[:50] + "..." if len(file_name) > 50 else file_name
                 if not display_file: display_file = full_path[:50] + "..." if len(full_path) > 50 else full_path
                 sha256 = event.get("SHA256", "N/A")
@@ -656,7 +636,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             dll_name = event.get("FileName", "")
             if actor_id and dll_path:
                 short_dll = dll_name if dll_name else dll_path.split('\\')[-1]
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 add_or_update_artifact_node(dll_path, short_dll, f"[{evt_type}]\nLoaded Module/Driver:\n{dll_path}", "module", event)
                 add_edge(actor_id, dll_path, "Loads Module", "#b366ff", evt_type, raw_event=event)
 
@@ -668,7 +648,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 reg_node_id = f"{reg_key}\\{reg_value}" if reg_value else reg_key
                 raw_reg = reg_value if reg_value else reg_key.split('\\')[-1]
                 display_reg = raw_reg[:50] + "..." if len(raw_reg) > 50 else raw_reg
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 full_reg_info = f"[{evt_type}]\nKey: {reg_key}\nValue: {reg_value}\nData:\n{reg_data}"
                 add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
                 add_edge(actor_id, reg_node_id, evt_type, "#ff9933", evt_type, raw_event=event)
@@ -696,7 +676,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
 
             if target_net:
                 net_node_id = f"{target_net}:{target_port}" if target_port else target_net
-                get_or_create_process_node(net_actor, net_actor_name, username, hostname, evt_type, event)
+                get_or_create_process_node(net_actor, net_actor_name, username, evt_type, event)
 
                 full_net_info = f"[{evt_type}]\nRemote: {remote_ip}:{remote_port}\nLocal: {local_ip}:{local_port}\nProtocol: {protocol}"
                 if remote_url: full_net_info += f"\nURL/Host: {remote_url}"
@@ -717,8 +697,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
 
         else:
             if actor_id and target_id and actor_id != target_id:
-                get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
-                get_or_create_process_node(target_id, target_name, username, hostname, evt_type, event)
+                get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
+                get_or_create_process_node(target_id, target_name, username, evt_type, event)
                 add_edge(actor_id, target_id, evt_type, "#a6a6a6", evt_type, raw_event=event)
 
     # Format for Cytoscape.js
