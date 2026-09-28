@@ -177,6 +177,10 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             domain = event.get("AccountDomain", "")
             user = event.get("AccountName", "Unknown")
             username = f"{domain}\\{user}" if domain and user != "Unknown" else user
+            hostname = event.get("DeviceName", "")
+
+            if not actor_id and target_id:
+               actor_id = target_id
 
         # --- FALCON EVENT LOGIC ---
         if is_falcon:
