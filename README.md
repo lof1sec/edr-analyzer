@@ -1,10 +1,10 @@
 # EDR Logs Graph Analyzer
 
-A full-stack web application designed to analyze Endpoint Detection and Response (EDR) logs (e.g., Microsoft Defender) by parsing CSV exports and mapping the relationships between entities using an interactive graph.
+A full-stack web application designed to analyze Endpoint Detection and Response (EDR) logs (e.g., CrowdStrike Falcon and Microsoft Defender) by parsing data exports and mapping the relationships between entities using an interactive graph.
 
 ## Features
 
-- **Automated Parsing:** Upload raw EDR CSV files. The backend automatically parses the rows into JSON and stores them in a scalable PostgreSQL database.
+- **Automated Parsing:** Upload raw EDR logs in CSV, JSON, or JSONL formats. The backend automatically normalizes the rows and stores them in a scalable PostgreSQL database.
 - **Interactive Graph Visualization:** Powered by **Cytoscape.js**, easily view process execution trees, file modifications, network connections, and more.
 - **Advanced Filtering:** Built-in sidebar to dynamically filter the graph by:
   - Global Text Search
@@ -15,8 +15,8 @@ A full-stack web application designed to analyze Endpoint Detection and Response
   - **Force-directed:** A physics-based cluster simulation (default).
   - **Tree:** A hierarchical left-to-right chain mapping parent/child process execution.
   - **Centered:** Focuses on the currently selected node and clusters related artifacts around it.
-- **Detailed Node Inspection:** Click on any node (Process, File, Registry, Network, Alert) to view the raw log details and observed actions in the dedicated right-hand side details panel.
-- **Scalable Architecture:** Uses PostgreSQL `JSONB` columns to flexibly adapt to future log formats (like CrowdStrike Falcon).
+- **Detailed Node Inspection:** Click on any node (Process, File, Registry, Network, Alert) to view the raw log details, associated hostname/device, and observed actions in the dedicated right-hand side details panel.
+- **Scalable Architecture:** Uses PostgreSQL `JSONB` columns to flexibly adapt to future and varying log formats seamlessly.
 
 ## Tech Stack
 
@@ -56,8 +56,8 @@ docker-compose up -d --build
 
 ### 1. Uploading Logs
 - On the left sidebar, click the **"Click to upload CSV"** area.
-- Select your raw EDR log export (e.g., `Defender.csv`).
-- The backend will parse the file, convert the records to JSON, and store them in the database.
+- Select your raw EDR log export (e.g., `Defender.csv`, `Falcon_Logs.json`).
+- The backend will parse the file and store the normalized events in the database.
 - Once finished, the new dataset will appear in the "Datasets" list.
 
 ### 2. Viewing the Graph
@@ -80,6 +80,7 @@ docker-compose up -d --build
 ### 4. Inspecting Details
 - Click on any node in the graph.
 - The right-hand pane will switch to the **Node Details** view, showing the metadata associated with that node, including Command Lines, Hashes, and raw JSON logs.
+- You can easily copy raw JSON logs to your clipboard using the dedicated **Copy** button located on each log event.
 - You can toggle the right-hand pane open or closed using the Filter/Close icons.
 
 ---
