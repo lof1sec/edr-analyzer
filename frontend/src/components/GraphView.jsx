@@ -1,8 +1,29 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X } from 'lucide-react';
+import { Filter, X, Copy, Check } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
+
+// Sub-component for individual copy buttons
+const CopyButton = ({ textToCopy }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-slate-600 dark:text-slate-300"
+      title="Copy JSON"
+    >
+      {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+    </button>
+  );
+};
 
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
@@ -376,11 +397,19 @@ export default function GraphView({ datasetId }) {
                 {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
                   <div className="mt-4">
                     <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
-                    {selectedNode.raw_logs.map((log, idx) => (
-                      <div key={idx} className="mb-4 bg-slate-100 dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono overflow-x-auto text-slate-800 dark:text-slate-200">
-                        <pre>{JSON.stringify(log, null, 2)}</pre>
-                      </div>
-                    ))}
+                    {selectedNode.raw_logs.map((log, idx) => {
+                      const jsonStr = JSON.stringify(log, null, 2);
+                      return (
+                        <div key={idx} className="mb-4 relative bg-slate-100 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono text-slate-800 dark:text-slate-200">
+                          <div className="absolute top-2 right-2">
+                            <CopyButton textToCopy={jsonStr} />
+                          </div>
+                          <div className="p-3 overflow-x-auto custom-scrollbar">
+                            <pre>{jsonStr}</pre>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
