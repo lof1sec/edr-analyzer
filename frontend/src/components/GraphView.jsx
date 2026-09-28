@@ -421,11 +421,11 @@ export default function GraphView({ datasetId }) {
             {/* Details Pane Content */}
             {selectedNode ? (
               <div className="space-y-4">
-                <div className="flex justify-between items-start mb-2">
-                  <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words pr-2">
+                <div className="flex justify-between items-start mb-2 gap-2">
+                  <h4 className="font-bold text-lg text-slate-800 dark:text-white break-all min-w-0 flex-1">
                     {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
                   </h4>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0">
                     <button
                       onClick={() => {
                         if (selectedNode.id) {
