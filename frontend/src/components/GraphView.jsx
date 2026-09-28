@@ -1,8 +1,29 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X } from 'lucide-react';
+import { Filter, X, Copy, Check } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
+
+// Sub-component for individual copy buttons
+const CopyButton = ({ textToCopy }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-slate-600 dark:text-slate-300"
+      title="Copy JSON"
+    >
+      {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+    </button>
+  );
+};
 
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
@@ -22,6 +43,9 @@ export default function GraphView({ datasetId }) {
   const [eventTypeSearch, setEventTypeSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [pidSearch, setPidSearch] = useState('');
+
+  // Manual Hiding State
+  const [manuallyHidden, setManuallyHidden] = useState(new Set());
 
   // Right Pane Toggle State
   const [isRightPaneOpen, setIsRightPaneOpen] = useState(true);
@@ -94,7 +118,11 @@ export default function GraphView({ datasetId }) {
         let isVisible = true;
         const d = node.data();
 
-        if (d.group === 'process') {
+        if (d.id && manuallyHidden.has(d.id)) {
+          isVisible = false;
+        }
+
+        if (isVisible && d.group === 'process') {
           if (d.username && users[d.username] === false) isVisible = false;
           if (d.id && pids[d.id] === false) isVisible = false;
         }
@@ -115,6 +143,10 @@ export default function GraphView({ datasetId }) {
         const d = edge.data();
         let isVisible = true;
 
+        if (d.id && manuallyHidden.has(d.id)) {
+          isVisible = false;
+        }
+
         if (d.event_simplename && eventTypes[d.event_simplename] === false) {
           isVisible = false;
         }
@@ -126,13 +158,17 @@ export default function GraphView({ datasetId }) {
           const edgeMatches = terms.some(term => text.includes(term));
 
           if (edgeMatches) {
-            // If edge matches, reveal its source and target nodes so the edge can be drawn
-            edge.source().removeClass('hidden');
-            edge.target().removeClass('hidden');
+            // If edge matches, reveal its source and target nodes so the edge can be drawn,
+            // EXCEPT if they are manually hidden.
+            if (!manuallyHidden.has(edge.source().id())) {
+              edge.source().removeClass('hidden');
+            }
+            if (!manuallyHidden.has(edge.target().id())) {
+              edge.target().removeClass('hidden');
+            }
           }
         }
 
-        // Standard edge hiding logic based on connected nodes
         if (edge.source().hasClass('hidden') || edge.target().hasClass('hidden')) {
           isVisible = false;
         }
@@ -152,7 +188,7 @@ export default function GraphView({ datasetId }) {
           }
       })
     });
-  }, [globalSearch, eventTypes, users, pids, elements]);
+  }, [globalSearch, eventTypes, users, pids, elements, manuallyHidden]);
 
   const getLayoutConfig = (mode, cy, selectedNode) => {
     switch(mode) {
@@ -385,9 +421,28 @@ export default function GraphView({ datasetId }) {
             {/* Details Pane Content */}
             {selectedNode ? (
               <div className="space-y-4">
-                <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words">
-                  {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
-                </h4>
+                <div className="flex justify-between items-start mb-2">
+                  <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words pr-2">
+                    {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (selectedNode.id) {
+                          setManuallyHidden(prev => new Set(prev).add(selectedNode.id));
+                          setSelectedNode(null);
+                        }
+                      }}
+                      className="shrink-0 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 px-2 py-1 rounded hover:bg-red-200 dark:hover:bg-red-800/50 transition-colors font-semibold"
+                      title="Hide this element from the graph"
+                    >
+                      Hide
+                    </button>
+                    {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
+                       <CopyButton textToCopy={JSON.stringify(selectedNode.raw_logs, null, 2)} />
+                    )}
+                  </div>
+                </div>
 
                 <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
                   <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>
@@ -396,11 +451,19 @@ export default function GraphView({ datasetId }) {
                 {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
                   <div className="mt-4">
                     <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
-                    {selectedNode.raw_logs.map((log, idx) => (
-                      <div key={idx} className="mb-4 bg-slate-100 dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono overflow-x-auto text-slate-800 dark:text-slate-200">
-                        <pre>{JSON.stringify(log, null, 2)}</pre>
-                      </div>
-                    ))}
+                    {selectedNode.raw_logs.map((log, idx) => {
+                      const jsonStr = JSON.stringify(log, null, 2);
+                      return (
+                        <div key={idx} className="mb-4 relative bg-slate-100 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono text-slate-800 dark:text-slate-200">
+                          <div className="absolute top-2 right-2">
+                            <CopyButton textToCopy={jsonStr} />
+                          </div>
+                          <div className="p-3 overflow-x-auto custom-scrollbar">
+                            <pre>{jsonStr}</pre>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -408,6 +471,21 @@ export default function GraphView({ datasetId }) {
 
             /* Filters Pane Content */
               <div className="space-y-6 text-sm">
+
+              {manuallyHidden.size > 0 && (
+                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-3 flex justify-between items-center">
+                  <span className="text-xs text-orange-800 dark:text-orange-300 font-semibold">
+                    {manuallyHidden.size} element{manuallyHidden.size > 1 ? 's' : ''} hidden
+                  </span>
+                  <button
+                    onClick={() => setManuallyHidden(new Set())}
+                    className="text-[10px] bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 px-2 py-1 rounded hover:bg-orange-300 dark:hover:bg-orange-700 transition-colors font-bold"
+                  >
+                    Unhide All
+                  </button>
+                </div>
+              )}
+
               <div>
                 <label className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
                 <input
