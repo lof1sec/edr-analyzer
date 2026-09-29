@@ -521,7 +521,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 cmd_node_id = f"pscmd_{actor_id}_{hash_str(ps_command)}"
                 wrapped_cmd = textwrap.fill(ps_command, width=60)
                 add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}", "commandline", event)
-                add_edge(actor_id, cmd_node_id, "Executes PS", "#ffcc00", evt_type, dashed=True, raw_event=event)
+                add_edge(actor_id, cmd_node_id, "Executes PS", "#ff9900", evt_type, dashed=True, raw_event=event)
 
         elif evt_type == "ClrUnbackedModuleLoaded":
             add_fields = get_additional_fields_dict(event)
