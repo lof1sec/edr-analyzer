@@ -409,9 +409,12 @@ export default function GraphView({ datasetId }) {
                 ) : (
                   <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-2 overflow-y-auto max-h-[60vh] custom-scrollbar">
                     <ul className="list-disc list-inside space-y-1">
-                      {unmappedEvents.map((evt, idx) => (
-                        <li key={idx} className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate" title={evt}>
-                          {evt}
+                      {Object.entries(unmappedEvents.reduce((acc, evt) => {
+                        acc[evt] = (acc[evt] || 0) + 1;
+                        return acc;
+                      }, {})).map(([evt, count], idx) => (
+                        <li key={idx} className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate" title={`${evt} (${count})`}>
+                          {evt} ({count})
                         </li>
                       ))}
                     </ul>
