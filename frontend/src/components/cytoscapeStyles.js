@@ -75,16 +75,6 @@ export const stylesheet = () => [
     }
   },
   {
-    selector: 'node[group="powershell"]',
-    style: {
-      'shape': 'rectangle',
-      'background-color': '#4d2e00',
-      'border-color': '#ff9900',
-      'border-width': 1,
-      'color': '#fff'
-    }
-  },
-  {
     selector: 'node[group="alert"]',
     style: {
       'shape': 'star',

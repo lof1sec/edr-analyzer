@@ -1,29 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check } from 'lucide-react';
+import { Filter, X } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
-
-// Sub-component for individual copy buttons
-const CopyButton = ({ textToCopy }) => {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(textToCopy);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-slate-600 dark:text-slate-300"
-      title="Copy JSON"
-    >
-      {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-    </button>
-  );
-};
 
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
@@ -39,16 +18,11 @@ export default function GraphView({ datasetId }) {
   const [users, setUsers] = useState({});
   const [pids, setPids] = useState({});
 
-  // Local Filter Searches
-  const [eventTypeSearch, setEventTypeSearch] = useState('');
-  const [userSearch, setUserSearch] = useState('');
-  const [pidSearch, setPidSearch] = useState('');
-
-  // Manual Hiding State
-  const [manuallyHidden, setManuallyHidden] = useState(new Set());
-
   // Right Pane Toggle State
   const [isRightPaneOpen, setIsRightPaneOpen] = useState(true);
+
+  const [activeTab, setActiveTab] = useState('filters'); // 'filters', 'details', 'unmapped'
+  const [unmappedEvents, setUnmappedEvents] = useState([]);
 
   const elementsById = useMemo(() => {
     const map = new Map();
@@ -95,6 +69,7 @@ export default function GraphView({ datasetId }) {
         ];
 
         setElements(cyElements);
+        setUnmappedEvents(data.unmapped_events || []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -118,18 +93,13 @@ export default function GraphView({ datasetId }) {
         let isVisible = true;
         const d = node.data();
 
-        if (d.id && manuallyHidden.has(d.id)) {
-          isVisible = false;
-        }
-
-        if (isVisible && d.group === 'process') {
+        if (d.group === 'process') {
           if (d.username && users[d.username] === false) isVisible = false;
           if (d.id && pids[d.id] === false) isVisible = false;
         }
 
         if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + rawLogsStr).toLowerCase();
+          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "")).toLowerCase();
           isVisible = terms.some(term => text.includes(term));
         }
 
@@ -143,30 +113,8 @@ export default function GraphView({ datasetId }) {
         const d = edge.data();
         let isVisible = true;
 
-        if (d.id && manuallyHidden.has(d.id)) {
-          isVisible = false;
-        }
-
         if (d.event_simplename && eventTypes[d.event_simplename] === false) {
           isVisible = false;
-        }
-
-        // Global search match for edges
-        if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + (d.event_simplename || "") + " " + rawLogsStr).toLowerCase();
-          const edgeMatches = terms.some(term => text.includes(term));
-
-          if (edgeMatches) {
-            // If edge matches, reveal its source and target nodes so the edge can be drawn,
-            // EXCEPT if they are manually hidden.
-            if (!manuallyHidden.has(edge.source().id())) {
-              edge.source().removeClass('hidden');
-            }
-            if (!manuallyHidden.has(edge.target().id())) {
-              edge.target().removeClass('hidden');
-            }
-          }
         }
 
         if (edge.source().hasClass('hidden') || edge.target().hasClass('hidden')) {
@@ -188,7 +136,7 @@ export default function GraphView({ datasetId }) {
           }
       })
     });
-  }, [globalSearch, eventTypes, users, pids, elements, manuallyHidden]);
+  }, [globalSearch, eventTypes, users, pids, elements]);
 
   const getLayoutConfig = (mode, cy, selectedNode) => {
     switch(mode) {
@@ -279,6 +227,7 @@ export default function GraphView({ datasetId }) {
     if (!isRightPaneOpen) {
       setIsRightPaneOpen(true);
     }
+    setActiveTab('details');
   };
 
   // Resize cytoscape on pane toggle so canvas redraws to fit new width
@@ -396,15 +345,23 @@ export default function GraphView({ datasetId }) {
           {/* Toggle View Header */}
           <div className="flex border-b border-slate-200 dark:border-slate-700">
              <button
-               className={`flex-1 p-3 text-sm font-bold transition-colors ${!selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-               onClick={() => setSelectedNode(null)}
+               className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'filters' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+               onClick={() => setActiveTab('filters')}
              >
                Filters
              </button>
              <button
-               className={`flex-1 p-3 text-sm font-bold transition-colors ${selectedNode ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+               className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'details' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'} ${!selectedNode && 'opacity-50 cursor-not-allowed'}`}
+               onClick={() => selectedNode && setActiveTab('details')}
+               disabled={!selectedNode}
              >
                Node Details
+             </button>
+             <button
+               className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'unmapped' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+               onClick={() => setActiveTab('unmapped')}
+             >
+               Unmapped Stats
              </button>
              <button
                onClick={() => setIsRightPaneOpen(false)}
@@ -419,30 +376,11 @@ export default function GraphView({ datasetId }) {
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
 
             {/* Details Pane Content */}
-            {selectedNode ? (
+            {activeTab === 'details' && selectedNode ? (
               <div className="space-y-4">
-                <div className="flex justify-between items-start mb-2 gap-2">
-                  <h4 className="font-bold text-lg text-slate-800 dark:text-white break-all min-w-0 flex-1">
-                    {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
-                  </h4>
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={() => {
-                        if (selectedNode.id) {
-                          setManuallyHidden(prev => new Set(prev).add(selectedNode.id));
-                          setSelectedNode(null);
-                        }
-                      }}
-                      className="shrink-0 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 px-2 py-1 rounded hover:bg-red-200 dark:hover:bg-red-800/50 transition-colors font-semibold"
-                      title="Hide this element from the graph"
-                    >
-                      Hide
-                    </button>
-                    {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
-                       <CopyButton textToCopy={JSON.stringify(selectedNode.raw_logs, null, 2)} />
-                    )}
-                  </div>
-                </div>
+                <h4 className="font-bold text-lg text-slate-800 dark:text-white break-words">
+                  {selectedNode.label || selectedNode.event_simplename || "Selected Element"}
+                </h4>
 
                 <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
                   <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>
@@ -451,41 +389,39 @@ export default function GraphView({ datasetId }) {
                 {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
                   <div className="mt-4">
                     <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
-                    {selectedNode.raw_logs.map((log, idx) => {
-                      const jsonStr = JSON.stringify(log, null, 2);
-                      return (
-                        <div key={idx} className="mb-4 relative bg-slate-100 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono text-slate-800 dark:text-slate-200">
-                          <div className="absolute top-2 right-2">
-                            <CopyButton textToCopy={jsonStr} />
-                          </div>
-                          <div className="p-3 overflow-x-auto custom-scrollbar">
-                            <pre>{jsonStr}</pre>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {selectedNode.raw_logs.map((log, idx) => (
+                      <div key={idx} className="mb-4 bg-slate-100 dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono overflow-x-auto text-slate-800 dark:text-slate-200">
+                        <pre>{JSON.stringify(log, null, 2)}</pre>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-            ) : (
+            ) : activeTab === 'unmapped' ? (
+
+            /* Unmapped Stats Pane Content */
+              <div className="space-y-4">
+                <h4 className="font-bold text-sm text-slate-800 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">
+                  Unmapped Events ({unmappedEvents.length})
+                </h4>
+                {unmappedEvents.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">All events have been successfully mapped.</p>
+                ) : (
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-2 overflow-y-auto max-h-[60vh] custom-scrollbar">
+                    <ul className="list-disc list-inside space-y-1">
+                      {unmappedEvents.map((evt, idx) => (
+                        <li key={idx} className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate" title={evt}>
+                          {evt}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : activeTab === 'filters' && (
 
             /* Filters Pane Content */
               <div className="space-y-6 text-sm">
-
-              {manuallyHidden.size > 0 && (
-                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-3 flex justify-between items-center">
-                  <span className="text-xs text-orange-800 dark:text-orange-300 font-semibold">
-                    {manuallyHidden.size} element{manuallyHidden.size > 1 ? 's' : ''} hidden
-                  </span>
-                  <button
-                    onClick={() => setManuallyHidden(new Set())}
-                    className="text-[10px] bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 px-2 py-1 rounded hover:bg-orange-300 dark:hover:bg-orange-700 transition-colors font-bold"
-                  >
-                    Unhide All
-                  </button>
-                </div>
-              )}
-
               <div>
                 <label className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
                 <input
@@ -498,24 +434,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Event Types</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllEvents(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllEvents(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={eventTypeSearch}
-                  onChange={(e) => setEventTypeSearch(e.target.value)}
-                  placeholder="Search event types..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(eventTypes).sort()
-                    .filter(evt => evt.toLowerCase().includes(eventTypeSearch.toLowerCase()))
-                    .map(evt => (
+                  {Object.keys(eventTypes).sort().map(evt => (
                     <label key={evt} className="flex items-center gap-2 cursor-pointer text-xs">
                       <input type="checkbox" checked={eventTypes[evt]} onChange={() => toggleEvent(evt)} className="rounded text-blue-500" />
                       <span className="truncate" title={evt}>{evt}</span>
@@ -525,24 +452,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Users</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllUsers(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllUsers(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search users..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(users).sort()
-                    .filter(usr => usr.toLowerCase().includes(userSearch.toLowerCase()))
-                    .map(usr => (
+                  {Object.keys(users).sort().map(usr => (
                     <label key={usr} className="flex items-center gap-2 cursor-pointer text-xs">
                       <input type="checkbox" checked={users[usr]} onChange={() => toggleUser(usr)} className="rounded text-blue-500" />
                       <span className="truncate" title={usr}>{usr}</span>
@@ -552,28 +470,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Process IDs (PIDs)</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllPids(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllPids(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={pidSearch}
-                  onChange={(e) => setPidSearch(e.target.value)}
-                  placeholder="Search PIDs..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(pids).sort()
-                    .filter(pid => {
-                      const node = elementsById.get(pid);
-                      const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
-                      return label.toLowerCase().includes(pidSearch.toLowerCase());
-                    })
-                    .map(pid => {
+                  {Object.keys(pids).sort().map(pid => {
                     const node = elementsById.get(pid);
                     const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
                     return (
