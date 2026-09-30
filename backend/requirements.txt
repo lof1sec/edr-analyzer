@@ -3,6 +3,4 @@ uvicorn
 sqlalchemy
 psycopg[binary]
 python-multipart
-networkx
 pydantic
-pydantic-settings
