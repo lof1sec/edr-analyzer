@@ -18,11 +18,6 @@ export default function GraphView({ datasetId }) {
   const [users, setUsers] = useState({});
   const [pids, setPids] = useState({});
 
-  // Local Filter Searches
-  const [eventTypeSearch, setEventTypeSearch] = useState('');
-  const [userSearch, setUserSearch] = useState('');
-  const [pidSearch, setPidSearch] = useState('');
-
   // Right Pane Toggle State
   const [isRightPaneOpen, setIsRightPaneOpen] = useState(true);
 
@@ -104,8 +99,7 @@ export default function GraphView({ datasetId }) {
         }
 
         if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + rawLogsStr).toLowerCase();
+          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "")).toLowerCase();
           isVisible = terms.some(term => text.includes(term));
         }
 
@@ -123,20 +117,6 @@ export default function GraphView({ datasetId }) {
           isVisible = false;
         }
 
-        // Global search match for edges
-        if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + (d.event_simplename || "") + " " + rawLogsStr).toLowerCase();
-          const edgeMatches = terms.some(term => text.includes(term));
-
-          if (edgeMatches) {
-            // If edge matches, reveal its source and target nodes so the edge can be drawn
-            edge.source().removeClass('hidden');
-            edge.target().removeClass('hidden');
-          }
-        }
-
-        // Standard edge hiding logic based on connected nodes
         if (edge.source().hasClass('hidden') || edge.target().hasClass('hidden')) {
           isVisible = false;
         }
@@ -457,24 +437,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Event Types</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllEvents(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllEvents(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={eventTypeSearch}
-                  onChange={(e) => setEventTypeSearch(e.target.value)}
-                  placeholder="Search event types..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(eventTypes).sort()
-                    .filter(evt => evt.toLowerCase().includes(eventTypeSearch.toLowerCase()))
-                    .map(evt => (
+                  {Object.keys(eventTypes).sort().map(evt => (
                     <label key={evt} className="flex items-center gap-2 cursor-pointer text-xs">
                       <input type="checkbox" checked={eventTypes[evt]} onChange={() => toggleEvent(evt)} className="rounded text-blue-500" />
                       <span className="truncate" title={evt}>{evt}</span>
@@ -484,24 +455,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Users</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllUsers(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllUsers(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search users..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(users).sort()
-                    .filter(usr => usr.toLowerCase().includes(userSearch.toLowerCase()))
-                    .map(usr => (
+                  {Object.keys(users).sort().map(usr => (
                     <label key={usr} className="flex items-center gap-2 cursor-pointer text-xs">
                       <input type="checkbox" checked={users[usr]} onChange={() => toggleUser(usr)} className="rounded text-blue-500" />
                       <span className="truncate" title={usr}>{usr}</span>
@@ -511,28 +473,15 @@ export default function GraphView({ datasetId }) {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-2">
                   <label className="font-semibold text-xs text-slate-500 uppercase block">Process IDs (PIDs)</label>
                   <div className="flex gap-2">
                     <button onClick={() => setAllPids(true)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">All</button>
                     <button onClick={() => setAllPids(false)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-600">None</button>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={pidSearch}
-                  onChange={(e) => setPidSearch(e.target.value)}
-                  placeholder="Search PIDs..."
-                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
-                />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(pids).sort()
-                    .filter(pid => {
-                      const node = elementsById.get(pid);
-                      const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
-                      return label.toLowerCase().includes(pidSearch.toLowerCase());
-                    })
-                    .map(pid => {
+                  {Object.keys(pids).sort().map(pid => {
                     const node = elementsById.get(pid);
                     const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
                     return (
