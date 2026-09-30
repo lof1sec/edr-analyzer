@@ -196,7 +196,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                         wrapped_cmd = textwrap.fill(cmdline, width=60)
 
                         add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw Command Line:\n{cmdline}", "commandline", event)
-                        add_edge(target_id, cmd_node_id, "Args", "#ff9900", evt_type, dashed=True, raw_event=event)
+                        add_edge(target_id, cmd_node_id, "Args", "#ffcc00", evt_type, dashed=True, raw_event=event)
 
             elif evt_type == "ProcessAncestryInformation":
                 base_file = event.get("BaseFileName", "").split('\\')[-1]
@@ -477,8 +477,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
                     wrapped_cmd = textwrap.fill(cmd_history, width=60)
 
-                    add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nCommand History:\n{cmd_history}", "commandline", event)
-                    add_edge(actor_ident, cmd_node_id, "History", "#ff9900", evt_type, dashed=True, raw_event=event)
+                add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nCommand History:\n{cmd_history}", "powershell", event)
+                add_edge(actor_ident, cmd_node_id, "History", "#ff9900", evt_type, dashed=True, raw_event=event)
 
             else:
                 actor_ident = context_id or source_id or parent_id
@@ -500,7 +500,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     cmd_node_id = f"cmd_{target_id}"
                     wrapped_cmd = textwrap.fill(cmdline, width=60)
                     add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw Command Line:\n{cmdline}", "commandline", event)
-                    add_edge(target_id, cmd_node_id, "Args", "#ff9900", evt_type, dashed=True, raw_event=event)
+                    add_edge(target_id, cmd_node_id, "Args", "#ffcc00", evt_type, dashed=True, raw_event=event)
 
         elif evt_type == "PowerShellCommand":
             add_fields = get_additional_fields_dict(event)
@@ -509,7 +509,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 get_or_create_process_node(actor_id, actor_name, username, evt_type, event)
                 cmd_node_id = f"pscmd_{actor_id}_{hash_str(ps_command)}"
                 wrapped_cmd = textwrap.fill(ps_command, width=60)
-                add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}", "commandline", event)
+                add_or_update_artifact_node(cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}", "powershell", event)
                 add_edge(actor_id, cmd_node_id, "Executes PS", "#ff9900", evt_type, dashed=True, raw_event=event)
 
         elif evt_type == "ClrUnbackedModuleLoaded":
@@ -533,7 +533,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 display_ldap = f"LDAP Search\n{search_filter[:30]}..." if len(search_filter) > 30 else f"LDAP Search\n{search_filter}"
                 ldap_info = f"[{evt_type}]\nFilter: {search_filter}\nAttributes: {attributes}"
                 add_or_update_artifact_node(ldap_node_id, display_ldap, ldap_info, "commandline", event)
-                add_edge(actor_id, ldap_node_id, "LDAP Query", "#ff9900", evt_type, dashed=True, raw_event=event)
+                add_edge(actor_id, ldap_node_id, "LDAP Query", "#ffcc00", evt_type, dashed=True, raw_event=event)
 
         elif evt_type in ["PnpDeviceAllowed", "PnpDeviceConnected"]:
             add_fields = get_additional_fields_dict(event)
@@ -554,7 +554,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 clip_node_id = f"clip_{actor_id}"
                 clip_info = f"[{evt_type}]\nProcess accessed system clipboard contents."
                 add_or_update_artifact_node(clip_node_id, "📋 Clipboard Data", clip_info, "commandline", event)
-                add_edge(actor_id, clip_node_id, "Reads Clipboard", "#ff9900", evt_type, dashed=True, raw_event=event)
+                add_edge(actor_id, clip_node_id, "Reads Clipboard", "#ffcc00", evt_type, dashed=True, raw_event=event)
 
         elif evt_type == "ProcessCreatedUsingWmiQuery":
             add_fields = get_additional_fields_dict(event)
@@ -565,7 +565,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
             wmi_node_id = f"wmi_query_{hash_str(str(add_fields))}"
             wmi_info = f"[{evt_type}]\nClient Machine: {client_machine}\nDetails:\n{event.get('AdditionalFields', '')}"
             add_or_update_artifact_node(wmi_node_id, f"WMI Query\n({client_machine})", wmi_info, "commandline", event)
-            add_edge(wmi_actor, wmi_node_id, "WMI Query", "#ff9900", evt_type, dashed=True, raw_event=event)
+            add_edge(wmi_actor, wmi_node_id, "WMI Query", "#ffcc00", evt_type, dashed=True, raw_event=event)
 
         elif evt_type == "NamedPipeEvent":
             add_fields = get_additional_fields_dict(event)
