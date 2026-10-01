@@ -432,7 +432,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
                     add_edge(actor_ident, reg_node_id, "Reg Update", "#ff9933", evt_type, raw_event=event)
 
-            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest", "DnsConnectionInspected"]:
+            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest", "DnsConnectionInspected", "SslConnectionInspected"]:
                 remote_ip = event.get("RemoteAddressIP4", "")
                 domain = event.get("DomainName", "")
 
@@ -443,8 +443,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
 
                 actor_ident = context_id or source_id
 
-                # If no process context is available for DNS connection, map it to the host
-                if not actor_ident and evt_type == "DnsConnectionInspected":
+                # If no process context is available for DNS/SSL connection, map it to the host
+                if not actor_ident and evt_type in ["DnsConnectionInspected", "SslConnectionInspected"]:
                     actor_ident = f"host_{event.get('ComputerName', 'UnknownHost')}"
                     if actor_ident not in nodes_dict:
                         add_or_update_artifact_node(actor_ident, f"Host:\n{event.get('ComputerName', 'Unknown')}", "Central Context Node", "network", event)
@@ -483,6 +483,18 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                         local_port = event.get("LocalPort", "")
 
                         full_net_info = f"[{evt_type}]\nRemote: {remote_ip}:{remote_port}\nLocal: {local_ip}:{local_port}"
+
+                        if evt_type == "SslConnectionInspected":
+                            add_fields = get_additional_fields_dict(event)
+                            server_name = add_fields.get("server_name", "Unknown Server")
+                            version = add_fields.get("version", "")
+                            ja3 = add_fields.get("ja3", "")
+                            ja4 = add_fields.get("ja4", "")
+                            full_net_info += f"\nServer Name: {server_name}"
+                            if version: full_net_info += f"\nTLS Version: {version}"
+                            if ja3: full_net_info += f"\nJA3: {ja3}"
+                            if ja4: full_net_info += f"\nJA4: {ja4}"
+
                         add_or_update_artifact_node(net_node_id, display_net, full_net_info, "network", event)
                         add_edge(actor_ident, net_node_id, evt_type, "#00ffff", evt_type, raw_event=event)
 
