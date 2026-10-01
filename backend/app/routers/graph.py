@@ -432,42 +432,19 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
                     add_edge(actor_ident, reg_node_id, "Reg Update", "#ff9933", evt_type, raw_event=event)
 
-            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest", "DnsConnectionInspected", "SslConnectionInspected"]:
+            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest"]:
                 remote_ip = event.get("RemoteAddressIP4", "")
                 domain = event.get("DomainName", "")
 
-                # Extract fields if it is DnsConnectionInspected
-                if evt_type == "DnsConnectionInspected":
-                    add_fields = get_additional_fields_dict(event)
-                    domain = add_fields.get("query", domain)
-
                 actor_ident = context_id or source_id
 
-                # If no process context is available for DNS/SSL connection, map it to the host
-                if not actor_ident and evt_type in ["DnsConnectionInspected", "SslConnectionInspected"]:
-                    actor_ident = f"host_{event.get('ComputerName', 'UnknownHost')}"
-                    if actor_ident not in nodes_dict:
-                        add_or_update_artifact_node(actor_ident, f"Host:\n{event.get('ComputerName', 'Unknown')}", "Central Context Node", "network", event)
-
                 if actor_ident and (remote_ip or domain):
-                    # Only create a process node if the actor_ident is an actual PID, not a host string
-                    if not str(actor_ident).startswith("host_"):
-                        get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
 
-                    if evt_type in ["DnsRequest", "DnsConnectionInspected"]:
+                    if evt_type == "DnsRequest":
                         dns_node_id = f"dns_{domain}"
                         ips = event.get("IP4Records", "")
                         cnames = event.get("CNAMERecords", "")
-
-                        if evt_type == "DnsConnectionInspected":
-                            add_fields = get_additional_fields_dict(event)
-                            answers = add_fields.get("answers", "")
-                            if isinstance(answers, str) and answers.startswith("["):
-                                try:
-                                    answers = ", ".join(json.loads(answers))
-                                except:
-                                    pass
-                            ips = answers if answers else ips
 
                         full_dns_info = f"[{evt_type}]\nDomain: {domain}"
                         if ips: full_dns_info += f"\nResolved IPs: {ips}"
@@ -483,17 +460,6 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                         local_port = event.get("LocalPort", "")
 
                         full_net_info = f"[{evt_type}]\nRemote: {remote_ip}:{remote_port}\nLocal: {local_ip}:{local_port}"
-
-                        if evt_type == "SslConnectionInspected":
-                            add_fields = get_additional_fields_dict(event)
-                            server_name = add_fields.get("server_name", "Unknown Server")
-                            version = add_fields.get("version", "")
-                            ja3 = add_fields.get("ja3", "")
-                            ja4 = add_fields.get("ja4", "")
-                            full_net_info += f"\nServer Name: {server_name}"
-                            if version: full_net_info += f"\nTLS Version: {version}"
-                            if ja3: full_net_info += f"\nJA3: {ja3}"
-                            if ja4: full_net_info += f"\nJA4: {ja4}"
 
                         add_or_update_artifact_node(net_node_id, display_net, full_net_info, "network", event)
                         add_edge(actor_ident, net_node_id, evt_type, "#00ffff", evt_type, raw_event=event)
@@ -721,47 +687,91 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
                 add_edge(actor_id, reg_node_id, evt_type, "#ff9933", evt_type, raw_event=event)
 
-        elif evt_type in ["ConnectionSuccess", "ConnectionFailed", "NetworkConnectionEvents", "NetworkCommunicationEvents", "ListeningPortCreated", "ListeningConnectionCreated", "InboundConnectionAccepted", "RemoteDesktopConnection", "HttpConnectionInspected", "ConnectionAcknowledged"]:
+        elif evt_type in ["ConnectionSuccess", "ConnectionFailed", "NetworkConnectionEvents", "NetworkCommunicationEvents", "ListeningPortCreated", "ListeningConnectionCreated", "InboundConnectionAccepted", "RemoteDesktopConnection", "HttpConnectionInspected", "ConnectionAcknowledged", "ConnectionDropped", "DnsConnectionInspected", "SslConnectionInspected"]:
             remote_ip = event.get("RemoteIP", "")
             remote_port = event.get("RemotePort", "")
             local_ip = event.get("LocalIP", "")
             local_port = event.get("LocalPort", "")
 
             add_fields = get_additional_fields_dict(event)
+
+            # Extract domain specifically for DnsConnectionInspected
+            if evt_type == "DnsConnectionInspected":
+                remote_url = add_fields.get("query", "")
+                target_net = remote_url
+            else:
+                remote_url = event.get("RemoteUrl", "")
+                if not remote_url: remote_url = add_fields.get("host", "") or add_fields.get("uri", "")
+                target_net = remote_ip if remote_ip else remote_url
+
             protocol = event.get("Protocol", "")
             if not protocol: protocol = add_fields.get("Protocol", "")
 
-            remote_url = event.get("RemoteUrl", "")
-            if not remote_url: remote_url = add_fields.get("host", "") or add_fields.get("uri", "")
-
-            target_net = remote_ip if remote_ip else remote_url
             if not target_net and local_ip:
                 target_net = f"Local_Listen:{local_ip}" if evt_type in ["ListeningPortCreated", "ListeningConnectionCreated"] else f"Local:{local_ip}"
 
             target_port = remote_port if remote_port else local_port
-            net_actor = actor_id if actor_id else "SYSTEM_NETWORK"
-            net_actor_name = actor_name if actor_id else "Network Subsystem"
+            net_actor = actor_id
+            net_actor_name = actor_name
+
+            if not net_actor:
+                if evt_type in ["DnsConnectionInspected", "SslConnectionInspected"]:
+                    net_actor = f"host_{hostname if hostname else 'UnknownHost'}"
+                    net_actor_name = f"Host:\n{hostname if hostname else 'Unknown'}"
+                    if net_actor not in nodes_dict:
+                        add_or_update_artifact_node(net_actor, net_actor_name, "Central Context Node", "network", event)
+                else:
+                    net_actor = "SYSTEM_NETWORK"
+                    net_actor_name = "Network Subsystem"
 
             if target_net:
                 net_node_id = f"{target_net}:{target_port}" if target_port else target_net
-                get_or_create_process_node(net_actor, net_actor_name, username, hostname, evt_type, event)
 
-                full_net_info = f"[{evt_type}]\nRemote: {remote_ip}:{remote_port}\nLocal: {local_ip}:{local_port}\nProtocol: {protocol}"
-                if remote_url: full_net_info += f"\nURL/Host: {remote_url}"
+                if not str(net_actor).startswith("host_"):
+                    get_or_create_process_node(net_actor, net_actor_name, username, hostname, evt_type, event)
 
-                if evt_type == "HttpConnectionInspected" and add_fields:
-                    method = add_fields.get("method", "UNKNOWN")
-                    status = add_fields.get("status_code", "N/A")
-                    full_net_info += f"\nHTTP Method: {method}\nStatus: {status}"
-                    if add_fields.get("direction"): full_net_info += f"\nDirection: {add_fields.get('direction')}"
+                if evt_type == "DnsConnectionInspected":
+                    ips = ""
+                    answers = add_fields.get("answers", "")
+                    if isinstance(answers, str) and answers.startswith("["):
+                        try:
+                            answers = ", ".join(json.loads(answers))
+                        except:
+                            pass
+                    ips = answers if answers else ""
 
-                elif evt_type == "ConnectionAcknowledged" and add_fields:
-                    if "Tcp Flags" in add_fields: full_net_info += f"\nTCP Flags: {add_fields.get('Tcp Flags')}"
-                    if "direction" in add_fields: full_net_info += f"\nDirection: {add_fields.get('direction')}"
-                    if "Packet Size" in add_fields: full_net_info += f"\nPacket Size: {add_fields.get('Packet Size')} bytes"
+                    full_net_info = f"[{evt_type}]\nDomain: {target_net}"
+                    if ips: full_net_info += f"\nResolved IPs: {ips}"
+                    add_or_update_artifact_node(f"dns_{target_net}", target_net, full_net_info, "network", event)
+                    add_edge(net_actor, f"dns_{target_net}", "DNS Query", "#00ffff", evt_type, raw_event=event)
 
-                add_or_update_artifact_node(net_node_id, net_node_id, full_net_info, "network", event)
-                add_edge(net_actor, net_node_id, evt_type, "#00ffff", evt_type, raw_event=event)
+                else:
+                    full_net_info = f"[{evt_type}]\nRemote: {remote_ip}:{remote_port}\nLocal: {local_ip}:{local_port}\nProtocol: {protocol}"
+                    if remote_url: full_net_info += f"\nURL/Host: {remote_url}"
+
+                    if evt_type == "HttpConnectionInspected" and add_fields:
+                        method = add_fields.get("method", "UNKNOWN")
+                        status = add_fields.get("status_code", "N/A")
+                        full_net_info += f"\nHTTP Method: {method}\nStatus: {status}"
+                        if add_fields.get("direction"): full_net_info += f"\nDirection: {add_fields.get('direction')}"
+
+                    elif evt_type == "ConnectionAcknowledged" and add_fields:
+                        if "Tcp Flags" in add_fields: full_net_info += f"\nTCP Flags: {add_fields.get('Tcp Flags')}"
+                        if "direction" in add_fields: full_net_info += f"\nDirection: {add_fields.get('direction')}"
+                        if "Packet Size" in add_fields: full_net_info += f"\nPacket Size: {add_fields.get('Packet Size')} bytes"
+
+                    elif evt_type == "SslConnectionInspected" and add_fields:
+                        server_name = add_fields.get("server_name", "Unknown Server")
+                        version = add_fields.get("version", "")
+                        ja3 = add_fields.get("ja3", "")
+                        ja4 = add_fields.get("ja4", "")
+                        full_net_info += f"\nServer Name: {server_name}"
+                        if version: full_net_info += f"\nTLS Version: {version}"
+                        if ja3: full_net_info += f"\nJA3: {ja3}"
+                        if ja4: full_net_info += f"\nJA4: {ja4}"
+
+                    add_or_update_artifact_node(net_node_id, net_node_id, full_net_info, "network", event)
+                    add_edge(net_actor, net_node_id, evt_type, "#00ffff", evt_type, raw_event=event)
 
         else:
             unmapped_events.append(evt_type)
