@@ -443,8 +443,16 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
 
                 actor_ident = context_id or source_id
 
+                # If no process context is available for DNS connection, map it to the host
+                if not actor_ident and evt_type == "DnsConnectionInspected":
+                    actor_ident = f"host_{event.get('ComputerName', 'UnknownHost')}"
+                    if actor_ident not in nodes_dict:
+                        add_or_update_artifact_node(actor_ident, f"Host:\n{event.get('ComputerName', 'Unknown')}", "Central Context Node", "network", event)
+
                 if actor_ident and (remote_ip or domain):
-                    get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
+                    # Only create a process node if the actor_ident is an actual PID, not a host string
+                    if not str(actor_ident).startswith("host_"):
+                        get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
 
                     if evt_type in ["DnsRequest", "DnsConnectionInspected"]:
                         dns_node_id = f"dns_{domain}"
