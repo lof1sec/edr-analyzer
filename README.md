@@ -9,6 +9,11 @@ A full-stack web application designed to analyze Endpoint Detection and Response
 - **Advanced Graph Layouts:** Seamlessly toggle between Force-directed, Tree, or Node-centric graph layouts.
 - **Deep Node Inspection:** Click graph elements to view deep metadata and raw logs in a dedicated side-panel.
 
+## Graph Event Relationships
+The application treats **Processes** as central actors (nodes) in the graph. The relationships (edges) to other artifacts (like Files, Network IPs, or child Processes) are determined by the event names present in the logs:
+- **Microsoft Defender:** Edges and actions are mapped using the `ActionType` field (e.g., `ProcessCreated`, `FileCreated`).
+- **CrowdStrike Falcon:** Edges and actions are mapped using the `#event_simpleName` field.
+
 ## Tech Stack
 - **Frontend:** React, Vite, Tailwind CSS v4, Cytoscape.js
 - **Backend:** Python, FastAPI, SQLAlchemy
