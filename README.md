@@ -1,93 +1,47 @@
 # EDR Logs Graph Analyzer
 
-A full-stack web application designed to analyze Endpoint Detection and Response (EDR) logs (e.g., Microsoft Defender) by parsing CSV exports and mapping the relationships between entities using an interactive graph.
+A full-stack web application designed to analyze Endpoint Detection and Response (EDR) logs by parsing CSV exports and mapping the relationships between entities using an interactive graph.
 
-## Features
+## Features Overview
+- **Automated CSV Parsing & Storage:** Upload raw EDR logs, automatically parsed to JSON and stored via PostgreSQL.
+- **Interactive Graphing:** Powered by Cytoscape.js, dynamically visualizing process trees, file modifications, and network connections.
+- **Dynamic Filtering:** Filter data by global text search, specific event types, usernames, or process IDs.
+- **Advanced Graph Layouts:** Seamlessly toggle between Force-directed, Tree, or Node-centric graph layouts.
+- **Deep Node Inspection:** Click graph elements to view deep metadata and raw logs in a dedicated side-panel.
 
-- **Automated Parsing:** Upload raw EDR CSV files. The backend automatically parses the rows into JSON and stores them in a scalable PostgreSQL database.
-- **Interactive Graph Visualization:** Powered by **Cytoscape.js**, easily view process execution trees, file modifications, network connections, and more.
-- **Advanced Filtering:** Built-in sidebar to dynamically filter the graph by:
-  - Global Text Search
-  - Event Types (e.g., `ProcessCreated`, `NetworkConnectionEvents`)
-  - Usernames
-  - Process IDs (PIDs)
-- **Advanced Graph Layouts:** A dedicated toolbar lets you instantly switch the visualization engine between:
-  - **Force-directed:** A physics-based cluster simulation (default).
-  - **Tree:** A hierarchical left-to-right chain mapping parent/child process execution.
-  - **Centered:** Focuses on the currently selected node and clusters related artifacts around it.
-- **Detailed Node Inspection:** Click on any node (Process, File, Registry, Network, Alert) to view the raw log details and observed actions in the dedicated right-hand side details panel.
-- **Scalable Architecture:** Uses PostgreSQL `JSONB` columns to flexibly adapt to future log formats (like CrowdStrike Falcon).
+## Graph Event Relationships
+The application treats **Processes** as central actors (nodes) in the graph. The relationships (edges) to other artifacts (like Files, Network IPs, or child Processes) are determined by the event names present in the logs:
+- **Microsoft Defender:** Edges and actions are mapped using the `ActionType` field (e.g., `ProcessCreated`, `FileCreated`).
+- **CrowdStrike Falcon:** Edges and actions are mapped using the `#event_simpleName` field.
 
 ## Tech Stack
-
-- **Frontend:** React, Vite, Tailwind CSS v4, Cytoscape.js (`react-cytoscapejs`), Lucide React.
-- **Backend:** Python, FastAPI, SQLAlchemy, Uvicorn.
-- **Database:** PostgreSQL 15.
-- **Orchestration:** Docker & Docker Compose.
+- **Frontend:** React, Vite, Tailwind CSS v4, Cytoscape.js
+- **Backend:** Python, FastAPI, SQLAlchemy
+- **Database / Infra:** PostgreSQL 15, Docker & Docker Compose
 
 ---
 
 ## 🚀 Quickstart & Deployment
 
-The application is containerized and managed via Docker Compose, making it incredibly easy to run locally.
-
 ### Prerequisites
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+- Docker & Docker Compose
 
 ### Running the Application
 
-1. Clone or download this repository.
-2. Open a terminal in the root directory (where `docker-compose.yml` is located).
-3. Run the following command to build and start the containers:
+1. Open a terminal in the root directory.
+2. Run the following command to build and start the containers:
 
 ```bash
 docker-compose up -d --build
 ```
-*(Note: If you have a newer version of docker, you may need to run `docker compose up -d --build`)*
+*(Note: You may need to run `docker compose up -d --build` on newer Docker versions)*
 
-4. Wait a few moments for the database to initialize and the servers to start.
-5. Open your web browser and navigate to:
-   **[http://localhost:5173](http://localhost:5173)**
+3. Navigate to **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ---
 
-## 📖 How to Use
+## 📖 Basic Usage
+1. **Upload Logs:** Use the sidebar to upload your raw EDR CSV file.
+2. **Analyze Data:** Click a dataset to load its visualization. Use the filters on the right to drill down into specific event types, search terms, or users. Click any node to inspect detailed log data.
 
-### 1. Uploading Logs
-- On the left sidebar, click the **"Click to upload CSV"** area.
-- Select your raw EDR log export (e.g., `Defender.csv`).
-- The backend will parse the file, convert the records to JSON, and store them in the database.
-- Once finished, the new dataset will appear in the "Datasets" list.
-
-### 2. Viewing the Graph
-- Click on your newly uploaded dataset in the sidebar to load it.
-- The graph will render in the main view area.
-  - **Red Rounded Boxes:** Processes
-  - **Blue Rectangles:** Files
-  - **Purple Hexagons:** Modules / DLLs
-  - **Teal Rectangles:** Network Connections
-  - **Brown Rectangles:** Registry Keys
-  - **Yellow Rectangles:** Command Lines
-  - **Red Stars:** Antivirus Alerts
-
-### 3. Filtering the Data
-- Use the **Filters & Search** panel on the right side of the screen.
-- **Global Search:** Type any string (e.g., `powershell`, `192.168.1.5`) to isolate nodes containing that text. You can separate multiple terms with a comma.
-- **Event Types:** Uncheck specific event types to hide edges and their associated artifacts from the graph.
-- **Users:** Isolate activity down to specific user accounts.
-
-### 4. Inspecting Details
-- Click on any node in the graph.
-- The right-hand pane will switch to the **Node Details** view, showing the metadata associated with that node, including Command Lines, Hashes, and raw JSON logs.
-- You can toggle the right-hand pane open or closed using the Filter/Close icons.
-
----
-
-## Stopping the Application
-
-To shut down the application and database, run:
-```bash
-docker-compose down
-```
-*Note: Your uploaded datasets and parsed logs are stored in a Docker volume (`postgres_data`) and will persist between restarts.*
+To shut down, run `docker-compose down`. Uploaded data persists via Docker volumes.

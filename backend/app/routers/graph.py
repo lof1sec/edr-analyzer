@@ -9,18 +9,28 @@ import textwrap
 router = APIRouter(prefix="/api/graph", tags=["Graph"])
 
 def get_additional_fields_dict(event_data):
-    fields = event_data.get("AdditionalFields", "")
+    fields = event_data.get("AdditionalFields")
+    if not fields:
+        return {}
     if isinstance(fields, dict):
         return fields
-    if isinstance(fields, str) and fields.strip().startswith("{"):
-        try:
-            return json.loads(fields)
-        except json.JSONDecodeError:
-            pass
+    if isinstance(fields, str):
+        fields = fields.strip()
+        if fields.startswith("{"):
+            try:
+                return json.loads(fields)
+            except json.JSONDecodeError:
+                pass
     return {}
 
+import functools
+
+@functools.lru_cache(maxsize=4096)
 def hash_str(val: str) -> str:
     return hashlib.md5(str(val).encode('utf-8')).hexdigest()[:10]
+
+def string_hash(val: str) -> int:
+    return abs(hash(val))
 
 @router.get("/{dataset_id}")
 def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
@@ -307,7 +317,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     short_name = clean_path.rstrip('/').split('/')[-1]
                     display_file = short_name[:50] + "..." if len(short_name) > 50 else short_name
 
-                    safe_file_id = f"file_{abs(hash(file_name))}"
+                    safe_file_id = f"file_{string_hash(file_name)}"
 
                     sha256 = event.get("SHA256HashData", "N/A")
                     tactic = event.get("Tactic", "N/A")
@@ -330,7 +340,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     clean_path = file_name.replace('\\', '/')
                     short_name = clean_path.rstrip('/').split('/')[-1]
                     display_file = short_name[:50] + "..." if len(short_name) > 50 else short_name
-                    safe_file_id = f"file_{abs(hash(file_name))}"
+                    safe_file_id = f"file_{string_hash(file_name)}"
 
                     tactic = event.get("Tactic", "N/A")
                     technique = event.get("Technique", "N/A")
@@ -351,7 +361,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     tactic = event.get("Tactic", "N/A")
                     technique = event.get("Technique", "N/A")
 
-                    sym_node_id = f"sym_{abs(hash(symlink))}"
+                    sym_node_id = f"sym_{string_hash(symlink)}"
                     display_label = symlink.replace('\\', '/').split('/')[-1]
                     display_label = display_label[:50] + "..." if len(display_label) > 50 else display_label
 
@@ -372,7 +382,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     if evt_type == "ScheduledTaskModified":
                         task_name = event.get("TaskName", "Unknown_Task")
                         task_xml = event.get("TaskXml", "")
-                        node_id = f"task_{abs(hash(task_name))}"
+                        node_id = f"task_{string_hash(task_name)}"
                         clean_task_name = task_name.replace('\\', '/').split('/')[-1]
                         display_label = f"Task:\n{clean_task_name}"
 
@@ -383,7 +393,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     elif evt_type in ["FirewallSetRule", "FirewallDeleteRule"]:
                         rule_id = event.get("FirewallRuleId", "Unknown_Rule")
                         rule_details = event.get("FirewallRule", "")
-                        node_id = f"fw_{abs(hash(rule_id))}"
+                        node_id = f"fw_{string_hash(rule_id)}"
                         display_label = f"FW Rule:\n{rule_id[:30]}"
 
                         full_info = f"[{evt_type}]\nRule ID: {rule_id}\nDetails: {rule_details}\nTactic: {tactic}\nTechnique: {technique}"
@@ -457,7 +467,7 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                 if host_node_id not in nodes_dict:
                     add_or_update_artifact_node(host_node_id, f"Host:\n{event.get('ComputerName', 'Unknown')}", "Central Context Node", "network", event)
 
-                event_hash = abs(hash(event.get('timestamp', 'time')))
+                event_hash = string_hash(str(event.get('timestamp', 'time')))
                 node_id = f"floating_{evt_type}_{event_hash}"
                 tactic = event.get("Tactic", "N/A")
                 technique = event.get("Technique", "N/A")
