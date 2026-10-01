@@ -432,18 +432,35 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
                     add_or_update_artifact_node(reg_node_id, display_reg, full_reg_info, "registry", event)
                     add_edge(actor_ident, reg_node_id, "Reg Update", "#ff9933", evt_type, raw_event=event)
 
-            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest"]:
+            elif evt_type in ["NetworkReceiveAcceptIP4", "NetworkConnectIP4", "NetworkConnectIP6", "DnsRequest", "DnsConnectionInspected"]:
                 remote_ip = event.get("RemoteAddressIP4", "")
                 domain = event.get("DomainName", "")
+
+                # Extract fields if it is DnsConnectionInspected
+                if evt_type == "DnsConnectionInspected":
+                    add_fields = get_additional_fields_dict(event)
+                    domain = add_fields.get("query", domain)
+
                 actor_ident = context_id or source_id
 
                 if actor_ident and (remote_ip or domain):
                     get_or_create_process_node(actor_ident, actor_name, username, hostname, evt_type, event)
 
-                    if evt_type == "DnsRequest":
+                    if evt_type in ["DnsRequest", "DnsConnectionInspected"]:
                         dns_node_id = f"dns_{domain}"
                         ips = event.get("IP4Records", "")
                         cnames = event.get("CNAMERecords", "")
+
+                        if evt_type == "DnsConnectionInspected":
+                            add_fields = get_additional_fields_dict(event)
+                            answers = add_fields.get("answers", "")
+                            if isinstance(answers, str) and answers.startswith("["):
+                                try:
+                                    answers = ", ".join(json.loads(answers))
+                                except:
+                                    pass
+                            ips = answers if answers else ips
+
                         full_dns_info = f"[{evt_type}]\nDomain: {domain}"
                         if ips: full_dns_info += f"\nResolved IPs: {ips}"
                         if cnames: full_dns_info += f"\nCNAMEs: {cnames}"
