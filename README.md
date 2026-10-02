@@ -26,6 +26,19 @@ The application treats **Processes** as central actors (nodes) in the graph. The
 ### Prerequisites
 - Docker & Docker Compose
 
+### Configuration
+
+Copy the example environment file and adjust the values:
+
+```bash
+cp .env.example .env
+```
+
+`.env` holds your database credentials and the allowed CORS origins. It is
+git-ignored and must never be committed. At minimum set a strong
+`POSTGRES_PASSWORD`; `CORS_ORIGINS` must list the exact browser origins allowed
+to call the API (never `*`).
+
 ### Running the Application
 
 1. Open a terminal in the root directory.
