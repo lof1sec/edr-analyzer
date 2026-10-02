@@ -4,6 +4,7 @@ A full-stack web application designed to analyze Endpoint Detection and Response
 
 ## Features Overview
 - **Automated CSV Parsing & Storage:** Upload raw EDR logs, automatically parsed to JSON and stored via PostgreSQL.
+- **Automatic Vendor Detection:** Recognises Microsoft Defender and CrowdStrike Falcon events from their fields, independent of whether the file is CSV, JSON, or JSONL.
 - **Interactive Graphing:** Powered by Cytoscape.js, dynamically visualizing process trees, file modifications, and network connections.
 - **Dynamic Filtering:** Filter data by global text search, specific event types, usernames, or process IDs.
 - **Advanced Graph Layouts:** Seamlessly toggle between Force-directed, Tree, or Node-centric graph layouts.

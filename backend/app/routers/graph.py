@@ -5,6 +5,7 @@ from app.models import LogEvent, Dataset
 from app.parsers.builder import GraphBuilder
 from app.parsers.falcon import parse_falcon_event
 from app.parsers.defender import parse_defender_event
+from app.parsers.vendor import is_falcon_event
 
 router = APIRouter(prefix="/api/graph", tags=["Graph"])
 
@@ -26,8 +27,8 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
         event = log.data
         evt_type = log.event_type
 
-        # Check if this is a CrowdStrike Falcon event (presence of #event_simpleName)
-        is_falcon = "#event_simpleName" in event
+        # Vendor is detected per event, so a dataset can safely mix exports.
+        is_falcon = is_falcon_event(event)
 
         if is_falcon:
             actor_id = event.get("ContextProcessId") or event.get("SourceProcessId") or event.get("ParentProcessId")

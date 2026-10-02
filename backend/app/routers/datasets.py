@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Dataset, LogEvent
 from app.schemas import DatasetResponse
+from app.parsers.vendor import extract_event_type
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
@@ -68,16 +69,54 @@ def _iter_clean_lines(file_obj, encoding):
 
 
 def _parse_csv_rows(file_obj, encoding):
-    """Yield ``(event_type, row)`` tuples for a Defender-style CSV export."""
+    """Yield ``(event_type, row)`` tuples for a CSV export.
+
+    The event type is taken from whichever vendor marker is present
+    (``ActionType`` for Defender, ``#event_simpleName`` for Falcon), so the
+    vendor no longer depends on the file extension.
+    """
     reader = csv.DictReader(_iter_clean_lines(file_obj, encoding))
     for row in reader:
-        yield row.get("ActionType", "Unknown"), row
+        yield extract_event_type(row), row
+
+
+def _looks_like_json_array(file_obj, encoding) -> bool:
+    """Peek at the first non-whitespace character to tell arrays from JSONL."""
+    file_obj.seek(0)
+    head = file_obj.read(4096)
+    file_obj.seek(0)
+    try:
+        text = head.decode(encoding, errors="ignore")
+    except LookupError:
+        return False
+    return text.lstrip().startswith("[")
+
+
+def _parse_json_document(file_obj, encoding):
+    """Parse the whole upload as a single JSON document (array or object)."""
+    file_obj.seek(0)
+    raw = file_obj.read().decode(encoding, errors="replace").replace("\x00", "")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Failed to parse JSON file")
+
+    # Accept either a top-level array or a single event object.
+    if isinstance(data, dict):
+        data = [data]
+    if isinstance(data, list):
+        for row in data:
+            if isinstance(row, dict):
+                yield extract_event_type(row), row
 
 
 def _parse_json_rows(file_obj, encoding):
     """Yield ``(event_type, row)`` tuples for Falcon JSONL or a JSON array."""
-    parsed_any = False
+    if _looks_like_json_array(file_obj, encoding):
+        yield from _parse_json_document(file_obj, encoding)
+        return
 
+    parsed_any = False
     for line in _iter_clean_lines(file_obj, encoding):
         line = line.strip()
         if not line or line in ("[", "]", "{", "}", "},"):
@@ -90,23 +129,13 @@ def _parse_json_rows(file_obj, encoding):
             continue
         if isinstance(row, dict):
             parsed_any = True
-            yield row.get("#event_simpleName", "Unknown"), row
+            yield extract_event_type(row), row
 
     if parsed_any:
         return
 
-    # Fallback: the whole file might be a single (pretty-printed) JSON array.
-    file_obj.seek(0)
-    raw = file_obj.read().decode(encoding, errors="replace").replace("\x00", "")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Failed to parse JSON file")
-
-    if isinstance(data, list):
-        for row in data:
-            if isinstance(row, dict):
-                yield row.get("#event_simpleName", "Unknown"), row
+    # Lines did not parse: the file may be a single (pretty-printed) document.
+    yield from _parse_json_document(file_obj, encoding)
 
 
 def _flush_batch(db: Session, batch: list) -> None:
