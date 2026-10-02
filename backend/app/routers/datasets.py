@@ -4,6 +4,7 @@ import io
 import json
 import os
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Dataset, LogEvent
@@ -203,19 +204,23 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
 @router.get("/", response_model=list[DatasetResponse])
 def get_datasets(db: Session = Depends(get_db)):
-    datasets = db.query(Dataset).all()
-    result = []
-    for ds in datasets:
-        count = db.query(LogEvent).filter(LogEvent.dataset_id == ds.id).count()
-        result.append(
-            DatasetResponse(
-                id=ds.id,
-                name=ds.name,
-                created_at=ds.created_at,
-                log_count=count
-            )
+    # Single aggregate query instead of one COUNT per dataset (N+1).
+    rows = (
+        db.query(Dataset, func.count(LogEvent.id))
+        .outerjoin(LogEvent, LogEvent.dataset_id == Dataset.id)
+        .group_by(Dataset.id)
+        .order_by(Dataset.id)
+        .all()
+    )
+    return [
+        DatasetResponse(
+            id=ds.id,
+            name=ds.name,
+            created_at=ds.created_at,
+            log_count=log_count,
         )
-    return result
+        for ds, log_count in rows
+    ]
 
 @router.delete("/{dataset_id}")
 def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
@@ -223,6 +228,11 @@ def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    # Bulk-delete the events instead of letting the ORM cascade load and delete
+    # them one by one, which is very slow for large datasets.
+    db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id).delete(
+        synchronize_session=False
+    )
     db.delete(dataset)
     db.commit()
     return {"message": "Dataset deleted successfully"}

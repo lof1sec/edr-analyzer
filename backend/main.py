@@ -1,11 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app import models, database
 from app.routers import datasets, graph
 from contextlib import asynccontextmanager
+import asyncio
 import os
-import time
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.exc import OperationalError
+
+ALEMBIC_INI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
+
+
+def run_migrations() -> None:
+    """Apply all pending Alembic migrations (replaces ``create_all``)."""
+    command.upgrade(Config(ALEMBIC_INI), "head")
 
 
 def get_allowed_origins() -> list[str]:
@@ -24,13 +32,13 @@ async def lifespan(app: FastAPI):
     retries = 5
     while retries > 0:
         try:
-            models.Base.metadata.create_all(bind=database.engine)
-            print("Successfully connected to the database and created tables.")
+            await asyncio.to_thread(run_migrations)
+            print("Database migrations applied.")
             break
         except OperationalError:
             retries -= 1
             print(f"Database not ready. Retrying in 5 seconds... ({retries} left)")
-            time.sleep(5)
+            await asyncio.sleep(5)
 
     if retries == 0:
         print("Failed to connect to the database. Starting anyway, but expect errors.")

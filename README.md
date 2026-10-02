@@ -60,3 +60,35 @@ docker-compose up -d --build
 2. **Analyze Data:** Click a dataset to load its visualization. Use the filters on the right to drill down into specific event types, search terms, or users. Click any node to inspect detailed log data.
 
 To shut down, run `docker-compose down`. Uploaded data persists via Docker volumes.
+
+---
+
+## 🛠️ Development
+
+### Backend
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+Database schema changes are managed with **Alembic** and applied automatically on
+backend startup (`alembic upgrade head`). To create a new revision:
+
+```bash
+cd backend
+alembic revision --autogenerate -m "describe your change"
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run dev
+```
+
+Continuous integration (`.github/workflows/ci.yml`) runs the backend test suite
+and the frontend lint/build on every push and pull request.
