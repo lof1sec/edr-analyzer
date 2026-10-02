@@ -23,8 +23,8 @@ cp .env.example .env
 # Run the whole stack (applies DB migrations on startup)
 docker-compose up -d --build
 
-# Backend tests (run from backend/)
-cd backend && python -m pytest -q
+# Backend tests. pytest is NOT in the runtime image: install dev deps first.
+cd backend && pip install -r requirements-dev.txt && python -m pytest -q
 
 # Frontend (run from frontend/)
 cd frontend && npm ci && npm run lint && npm run build
@@ -35,6 +35,18 @@ cd backend && alembic revision --autogenerate -m "describe change"
 
 - Frontend: http://localhost:5173
 - Backend / API docs: http://localhost:8000/docs
+
+### Docker layout (dev, not prod)
+
+Both images run **dev servers over a bind mount**, so code edits are picked up
+without rebuilding:
+
+- backend: `uvicorn main:app --reload`, `./backend:/app`
+- frontend: `vite --host`, `./frontend:/app` + a `frontend_node_modules` volume
+
+The frontend container serves the **Vite dev server**, never a production build.
+If a Windows bind-mount edit does not appear, restart just that service
+(`docker compose restart frontend`); the file watcher is unreliable there.
 
 ## Environment & configuration
 
@@ -96,9 +108,10 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 
 ## Testing
 
-- Backend: `backend/tests/` (32 tests). Cover vendor detection, upload parsing,
+- Backend: `backend/tests/` (34 tests). Cover vendor detection, upload parsing,
   builder ids, raw-log separation/capping, the graph cache, and parser smoke
-  tests. Add a test when adding an event mapping or touching the graph payload.
+  tests (incl. the styled command-execution events). Add a test when adding an
+  event mapping or touching the graph payload.
 - Frontend: `npm run lint` (oxlint) and `npm run build`. There are three
   tolerated warnings: two `set-state-in-effect` (pre-existing) and one
   `react(refs)` for intentionally reading `initialPositions` in a `useMemo`.
@@ -114,6 +127,11 @@ Conventional-commit prefixes have been used so far (`security:`, `perf:`,
 
 - `GraphView.jsx` uses `react-cytoscapejs`, which re-runs the layout whenever
   the `layout` prop reference changes — keep it memoised (`useMemo`).
+- `react-cytoscapejs` calls the `cy` prop on **every** mount/update. Register
+  the graph event listeners inside that callback, guarded by instance identity,
+  not in a `useEffect`: the effect version can bind to a destroyed instance
+  (e.g. while the loading spinner unmounts Cytoscape) and silently break node
+  selection / Node Details. `cy.destroy()` clears the listeners on unmount.
 - The upload endpoint is a sync `def` (runs in the threadpool); don't switch it
   back to `async def` while doing blocking DB work.
 - `backend/app/database.py` raises at import if `DATABASE_URL` is missing; tests
