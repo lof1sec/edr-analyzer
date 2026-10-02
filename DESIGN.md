@@ -138,6 +138,13 @@ out (6 for nodes, 5 for edges).
 
 ## 6. Components
 
+### Auth gate (`frontend/src/components/AuthPage.jsx`)
+
+Full-screen, centered card (`max-w-sm`, `rounded-lg`, `shadow`) on the page
+background. Serves both the first-run "create admin" form and the login form.
+Inputs and the primary button reuse the shared styles (see Inputs / Buttons).
+Errors are inline (`text-xs text-red-600 dark:text-red-400`), never `alert()`.
+
 ### Sidebar (`frontend/src/components/Sidebar.jsx`)
 
 - Width: collapsed `w-16`, expanded `w-80`; `border-r`, `bg-white dark:bg-slate-800`.
@@ -149,6 +156,9 @@ out (6 for nodes, 5 for edges).
   `bg-white border-slate-200 hover:border-blue-300` (dark mirrors).
 - **Section header:** `text-sm font-semibold uppercase tracking-wider
   text-slate-500 dark:text-slate-400`.
+- **Account footer:** the username (`text-xs`, muted) plus a ghost sign-out
+  button pinned to the bottom (`border-t`); the collapsed rail shows a sign-out
+  icon too.
 
 ### Buttons
 

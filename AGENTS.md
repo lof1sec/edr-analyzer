@@ -62,6 +62,8 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 | `DATABASE_URL` | Full SQLAlchemy URL (only needed outside Compose) |
 | `GRAPH_CACHE_SIZE` | Generated-graph cache entries (default `4`) |
 | `GRAPH_CACHE_TTL_SECONDS` | Cached graph lifetime, seconds (default `300`; `0` disables) |
+| `SECRET_KEY` | Signs session cookies; unset → ephemeral key (sessions lost on restart) |
+| `SESSION_COOKIE_SECURE` | `true` restricts the session cookie to HTTPS (default `false`) |
 
 ## Architecture & key files
 
@@ -70,6 +72,9 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/parsers/vendor.py` — vendor / event-type detection from fields.
 - `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
+- `backend/app/routers/auth.py` — first-run admin setup, login/logout, and the
+  `require_user` guard (httpOnly session cookie).
+- `backend/app/security.py` — Argon2id password hashing.
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
   lazy raw-log and search endpoints, cache-backed payloads.
@@ -77,10 +82,12 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   generated graphs; invalidated on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
-- `backend/main.py` — FastAPI app, CORS allowlist, startup migrations.
+- `backend/main.py` — FastAPI app, session middleware, CORS allowlist, startup
+  migrations.
 - `backend/alembic/` — migration environment + revisions.
 - `frontend/src/api/client.js` — **single** place for API calls; always use it.
 - `frontend/src/components/GraphView.jsx` — the large graph component (be careful).
+- `frontend/src/components/AuthPage.jsx` — login / first-run setup gate.
 - `frontend/src/hooks/useDebouncedValue.js` — debounce helper.
 
 ## Conventions & invariants (do not break)
@@ -111,21 +118,30 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    `_search_text`, which every event contributes to (bounded by
    `MAX_SEARCH_TEXT_CHARS`), so search is not limited by the raw-log cap.
    `unmapped_events` is returned as `{event_type: count}`, not a flat list.
+9. **Data routes require authentication.** The `datasets` and `graph` routers
+   carry `dependencies=[Depends(require_user)]`; `/` and `/api/auth/*` stay
+   public. The session is an httpOnly, signed cookie (`SECRET_KEY`) holding only
+   the user id — never keep a token in JS-readable storage. Passwords are
+   Argon2id-hashed via `app/security.py`; the admin is created once, on first run.
 
 ## Testing
 
-- Backend: `backend/tests/` (46 tests): pure parser/builder tests plus
-  `test_api.py`, which exercises the HTTP endpoints against an in-memory sqlite
-  DB. `TestClient` is used *without* its context manager so the PostgreSQL
-  startup migrations are skipped; `models.py` uses
-  `JSON().with_variant(JSONB, "postgresql")` so the schema also builds on sqlite.
-  Add a test when adding an event mapping, endpoint, or touching the payload.
+- Backend: `backend/tests/` (53 tests): pure parser/builder tests plus HTTP tests
+  (`test_api.py`, `test_auth.py`) against an in-memory sqlite DB. Shared fixtures
+  live in `tests/conftest.py`: `client` (fresh DB + `TestClient`) and
+  `admin_client` (creates the admin and logs in). Data routes are authenticated,
+  so new endpoint tests should request `admin_client`. `TestClient` is used
+  *without* its context manager so the PostgreSQL startup migrations are skipped;
+  `models.py` uses `JSON().with_variant(JSONB, "postgresql")` so the schema also
+  builds on sqlite. `conftest.py` sets `SECRET_KEY` so session cookies are valid
+  in tests. Add a test when adding an event mapping, endpoint, or touching the
+  payload.
 - Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
   Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
   in defaults are intentionally exempt via `B008`.
-- Frontend: `npm run lint` (oxlint) and `npm run build`. There are three
-  tolerated warnings: two `set-state-in-effect` (pre-existing) and one
-  `react(refs)` for intentionally reading `initialPositions` in a `useMemo`.
+- Frontend: `npm run lint` (oxlint) and `npm run build`. A few `react` warnings
+  are tolerated (a handful of `set-state-in-effect` for async data loads, plus
+  one `react(refs)` for intentionally reading `initialPositions` in a `useMemo`).
   Do not fail the build over these.
 - CI (`.github/workflows/ci.yml`) runs on push/PR to `main` and `v2`
   (backend: ruff + pytest; frontend: lint + build).
@@ -148,5 +164,8 @@ Conventional-commit prefixes have been used so far (`security:`, `perf:`,
   back to `async def` while doing blocking DB work.
 - `backend/app/database.py` raises at import if `DATABASE_URL` is missing; tests
   set `DATABASE_URL=sqlite://` in `tests/conftest.py`.
+- `SECRET_KEY` signs session cookies. If unset, `main.py` generates an ephemeral
+  key and warns, so sessions die on every restart — set it in `.env` for stable
+  sessions.
 - Ruff is configured for **linting only** (`ruff check`), not formatting. There
   is no auto-formatter, so match the surrounding style by hand.

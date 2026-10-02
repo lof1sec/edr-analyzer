@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, X, Database, Menu } from 'lucide-react';
+import { Upload, X, Database, Menu, LogOut } from 'lucide-react';
 import { api } from '../api/client';
 
 export default function Sidebar({
@@ -10,7 +10,9 @@ export default function Sidebar({
   isUploading,
   setIsUploading,
   isOpen,
-  setIsOpen
+  setIsOpen,
+  username,
+  onLogout
 }) {
   const [uploadError, setUploadError] = useState(null);
 
@@ -55,6 +57,13 @@ export default function Sidebar({
           title="Open Sidebar"
         >
           <Menu size={24} />
+        </button>
+        <button
+          onClick={onLogout}
+          className="mt-auto p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+          title="Sign out"
+        >
+          <LogOut size={20} />
         </button>
       </div>
     );
@@ -122,6 +131,19 @@ export default function Sidebar({
             <p className="text-sm text-slate-500 dark:text-slate-400 text-center italic mt-10">No datasets found.</p>
           )}
         </div>
+      </div>
+
+      <div className="p-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+        <span className="text-xs text-slate-500 dark:text-slate-400 truncate" title={username}>
+          {username}
+        </span>
+        <button
+          onClick={onLogout}
+          className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400 shrink-0"
+          title="Sign out"
+        >
+          <LogOut size={18} />
+        </button>
       </div>
     </div>
   );
