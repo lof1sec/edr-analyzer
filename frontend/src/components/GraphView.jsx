@@ -35,6 +35,7 @@ const LEGEND_ITEMS = [
   { label: 'Network', color: '#003333', border: '#00ffff' },
   { label: 'Command line', color: '#332b00', border: '#ffcc00' },
   { label: 'PowerShell', color: '#4d2e00', border: '#ff9900' },
+  { label: 'Command exec', color: '#431407', border: '#c2410c' },
   { label: 'Alert', color: '#b30000', border: '#ff0000' },
 ];
 

@@ -82,3 +82,43 @@ def test_graph_ids_are_unique_and_serialisable(build):
     assert len(node_ids) == len(set(node_ids))
     assert len(edge_ids) == len(set(edge_ids))
     assert not (set(node_ids) & set(edge_ids))
+
+
+def test_defender_powershell_command_uses_dark_orange_exec_style():
+    builder = GraphBuilder()
+    parse_defender_event(
+        builder,
+        {
+            "ActionType": "PowerShellCommand",
+            "InitiatingProcessId": "700",
+            "AdditionalFields": '{"Command": "Get-ChildItem"}',
+        },
+        "PowerShellCommand", "700", "powershell.exe", None, None, "SYSTEM", "H2",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "commandline-exec")
+    assert node["data"]["group"] == "commandline-exec"
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Executes PS")
+    assert edge["data"]["color"] == "#c2410c"
+
+
+def test_falcon_command_history_uses_dark_orange_exec_style():
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CommandHistory",
+            "ContextProcessId": "800",
+            "CommandHistory": "whoami",
+        },
+        "CommandHistory", "800", "cmd.exe", None, None, "CORP\\bob", "H1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "commandline-exec")
+    assert node["data"]["group"] == "commandline-exec"
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "History")
+    assert edge["data"]["color"] == "#c2410c"

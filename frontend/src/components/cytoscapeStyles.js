@@ -85,6 +85,17 @@ export const stylesheet = () => [
     }
   },
   {
+    // PowerShell command / command history artifacts (darker orange).
+    selector: 'node[group="commandline-exec"]',
+    style: {
+      'shape': 'rectangle',
+      'background-color': '#431407',
+      'border-color': '#c2410c',
+      'border-width': 1,
+      'color': '#fff'
+    }
+  },
+  {
     selector: 'node[group="alert"]',
     style: {
       'shape': 'star',
