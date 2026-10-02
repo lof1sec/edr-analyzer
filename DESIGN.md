@@ -141,9 +141,11 @@ out (6 for nodes, 5 for edges).
 ### Auth gate (`frontend/src/components/AuthPage.jsx`)
 
 Full-screen, centered card (`max-w-sm`, `rounded-lg`, `shadow`) on the page
-background. Serves both the first-run "create admin" form and the login form.
-Inputs and the primary button reuse the shared styles (see Inputs / Buttons).
-Errors are inline (`text-xs text-red-600 dark:text-red-400`), never `alert()`.
+background. Normally shows the login form — the admin is provisioned from the
+environment (`POSTGRES_USER`/`POSTGRES_PASSWORD`); the "create admin" form is only
+a fallback when no credentials are configured. Inputs and the primary button
+reuse the shared styles (see Inputs / Buttons). Errors are inline
+(`text-xs text-red-600 dark:text-red-400`), never `alert()`.
 
 ### Change-password modal (`frontend/src/components/ChangePasswordModal.jsx`)
 

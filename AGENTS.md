@@ -55,7 +55,8 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 
 | Variable | Purpose |
 | --- | --- |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | DB credentials and name |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | DB credentials and name; user/password are also the app admin login |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Optional override of the app admin login (default `POSTGRES_USER`/`POSTGRES_PASSWORD`) |
 | `CORS_ORIGINS` | Comma-separated origin allowlist (never `*`) |
 | `MAX_UPLOAD_SIZE_MB` | Upload cap (default `200`; over → HTTP 413) |
 | `VITE_API_URL` | Backend base URL used by the frontend |
@@ -75,6 +76,8 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/routers/auth.py` — first-run admin setup, login/logout, and the
   `require_user` guard (httpOnly session cookie).
 - `backend/app/security.py` — Argon2id password hashing.
+- `backend/app/bootstrap.py` — provisions the admin from the environment
+  (Postgres credentials) on startup.
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
   lazy raw-log and search endpoints, cache-backed payloads.
@@ -122,20 +125,24 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    carry `dependencies=[Depends(require_user)]`; `/` and `/api/auth/*` stay
    public. The session is an httpOnly, signed cookie (`SECRET_KEY`) holding only
    the user id — never keep a token in JS-readable storage. Passwords are
-   Argon2id-hashed via `app/security.py`; the admin is created once, on first run.
+   Argon2id-hashed via `app/security.py`. The admin is provisioned from
+   `POSTGRES_USER`/`POSTGRES_PASSWORD` (override `ADMIN_*`) at startup, so the DB
+   credentials also log into the app; `/api/auth/setup` is only a fallback when no
+   environment credentials are set. Existing accounts are never overwritten, so a
+   password changed in-app survives restarts.
 
 ## Testing
 
-- Backend: `backend/tests/` (53 tests): pure parser/builder tests plus HTTP tests
-  (`test_api.py`, `test_auth.py`) against an in-memory sqlite DB. Shared fixtures
-  live in `tests/conftest.py`: `client` (fresh DB + `TestClient`) and
-  `admin_client` (creates the admin and logs in). Data routes are authenticated,
-  so new endpoint tests should request `admin_client`. `TestClient` is used
-  *without* its context manager so the PostgreSQL startup migrations are skipped;
-  `models.py` uses `JSON().with_variant(JSONB, "postgresql")` so the schema also
-  builds on sqlite. `conftest.py` sets `SECRET_KEY` so session cookies are valid
-  in tests. Add a test when adding an event mapping, endpoint, or touching the
-  payload.
+- Backend: `backend/tests/` (63 tests): pure parser/builder tests plus HTTP tests
+  (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
+  DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
+  `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
+  Data routes are authenticated, so new endpoint tests should request
+  `admin_client`. `TestClient` is used *without* its context manager so the
+  PostgreSQL startup migrations are skipped; `models.py` uses
+  `JSON().with_variant(JSONB, "postgresql")` so the schema also builds on sqlite.
+  `conftest.py` sets `SECRET_KEY` so session cookies are valid in tests. Add a
+  test when adding an event mapping, endpoint, or touching the payload.
 - Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
   Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
   in defaults are intentionally exempt via `B008`.

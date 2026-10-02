@@ -8,8 +8,10 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
 
 ## Features
 
-- **Authentication:** a single admin account created on first run; login uses an
-  httpOnly session cookie. Upload and graph endpoints require a session.
+- **Authentication:** the admin login is provisioned from the PostgreSQL
+  credentials (`POSTGRES_USER`/`POSTGRES_PASSWORD`) at startup — the same
+  user/password opens the app and connects to the database. Sessions are httpOnly
+  cookies; upload and graph endpoints require a session.
 - **Flexible ingestion:** Upload `.csv`, `.json` or `.jsonl` files. Parsing is
   streamed (no full-file buffering) and the upload size is capped with a
   configurable limit.
@@ -44,9 +46,10 @@ products. Events that match neither marker are still stored (event type
 
 ## How It Works
 
-1. **Authenticate** — on first run `POST /api/auth/setup` creates the admin;
-   afterwards `POST /api/auth/login` starts a signed, httpOnly session cookie
-   that every data endpoint requires.
+1. **Authenticate** — on startup the backend provisions the admin from the
+   environment (`POSTGRES_USER`/`POSTGRES_PASSWORD`, or `ADMIN_*` when set), and
+   `POST /api/auth/login` starts a signed, httpOnly session cookie that every
+   data endpoint requires.
 2. **Ingest** — `POST /api/datasets/upload` streams the upload in 1 MiB chunks,
    enforces `MAX_UPLOAD_SIZE_MB` (rejects with HTTP 413), detects UTF-8/latin-1,
    parses CSV/JSONL/JSON-array/single-object input, extracts the event type per
@@ -111,9 +114,11 @@ All settings are read from the environment (via `.env` in Docker Compose).
 
 | Variable | Used by | Default | Description |
 | --- | --- | --- | --- |
-| `POSTGRES_USER` | db / backend | *(required)* | PostgreSQL user |
-| `POSTGRES_PASSWORD` | db / backend | *(required)* | PostgreSQL password — set a strong value |
+| `POSTGRES_USER` | db / backend | *(required)* | PostgreSQL user — also the app admin login |
+| `POSTGRES_PASSWORD` | db / backend | *(required)* | PostgreSQL password — also the app admin password; set a strong value |
 | `POSTGRES_DB` | db / backend | *(required)* | PostgreSQL database name |
+| `ADMIN_USERNAME` | backend | `POSTGRES_USER` | Override the app admin login (defaults to the PostgreSQL user) |
+| `ADMIN_PASSWORD` | backend | `POSTGRES_PASSWORD` | Override the app admin password (defaults to the PostgreSQL password) |
 | `CORS_ORIGINS` | backend | `http://localhost:5173` | Comma-separated allowlist of browser origins. Never use `*` |
 | `MAX_UPLOAD_SIZE_MB` | backend | `200` | Maximum accepted upload size; larger files get HTTP 413 |
 | `GRAPH_CACHE_SIZE` | backend | `4` | Generated-graph cache entries kept in memory |
@@ -136,9 +141,10 @@ uvicorn main:app --reload
 
 ## 📖 Usage
 
-1. **Sign in:** on first run the app asks you to create the administrator
-   account; afterwards you log in. The session is an httpOnly cookie — use the
-   sign-out button at the bottom of the sidebar to end it.
+1. **Sign in:** use the administrator credentials from your environment — by
+   default the same `POSTGRES_USER`/`POSTGRES_PASSWORD` you configured in
+   `.env`. The session is an httpOnly cookie; use the sign-out button at the
+   bottom of the sidebar to end it.
 2. **Upload logs:** use the sidebar to upload a `.csv`, `.json` or `.jsonl`
    export. The backend reports the number of parsed events or the reason for a
    rejection (e.g. file too large).
@@ -157,7 +163,7 @@ uvicorn main:app --reload
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/auth/status` | Whether first-run setup is needed and if a session is active |
-| `POST` | `/api/auth/setup` | Create the first admin account and start a session (only while no user exists) |
+| `POST` | `/api/auth/setup` | Fallback: create the first admin when no environment credentials are set (only while no user exists) |
 | `POST` | `/api/auth/login` | Authenticate and start a session |
 | `POST` | `/api/auth/logout` | End the session |
 | `GET` | `/api/auth/me` | Current user (`401` when unauthenticated) |
@@ -242,6 +248,7 @@ edr-analyzer/
 │   │   ├── database.py       # engine/session (DATABASE_URL)
 │   │   ├── models.py         # Dataset, LogEvent, User
 │   │   ├── security.py       # password hashing (Argon2id)
+│   │   ├── bootstrap.py      # provision the admin from the environment
 │   │   └── schemas.py        # Pydantic schemas
 │   ├── alembic/              # migration environment + revisions
 │   ├── tests/                # pytest suite
@@ -271,7 +278,11 @@ edr-analyzer/
 - Database credentials live in `.env` (git-ignored); no secrets are hardcoded.
 - CORS is restricted to an explicit allowlist (`CORS_ORIGINS`).
 - Uploads are size-limited and streamed to avoid unbounded memory use.
-- Authentication is a single admin account created on first run, using an
-  httpOnly, signed session cookie (`SECRET_KEY`). Dataset and graph endpoints
-  reject unauthenticated requests with `401`.
+- Authentication reuses the PostgreSQL credentials as the admin login
+  (`POSTGRES_USER`/`POSTGRES_PASSWORD`, override with `ADMIN_*`), delivered
+  through an httpOnly, signed session cookie (`SECRET_KEY`). Dataset and graph
+  endpoints reject unauthenticated requests with `401`.
 - Passwords are hashed with Argon2id; plaintext passwords are never stored.
+- The admin account lives in the database volume, not in the repo — two clones
+  whose folder name is the same share the same Postgres volume and thus the same
+  admin.

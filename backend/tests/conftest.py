@@ -62,6 +62,15 @@ def _fresh_database():
 
 
 @pytest.fixture
+def db_session(_fresh_database):
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture
 def client(_fresh_database):
     # No context manager: entering it would run the lifespan (PostgreSQL
     # migrations). A fresh TestClient also isolates the session cookie per test.
