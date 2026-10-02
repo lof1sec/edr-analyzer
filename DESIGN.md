@@ -134,6 +134,9 @@ out (6 for nodes, 5 for edges).
   (`edr-theme`). The sidebar's theme button cycles them.
 - The resolved theme toggles the `dark` class on `<html>`; an inline script in
   `frontend/index.html` applies it before first paint to avoid a flash.
+- `frontend/src/index.css` opts into class-based dark mode with
+  `@custom-variant dark (&:where(.dark, .dark *))` (Tailwind v4 otherwise keys
+  `dark:` off `prefers-color-scheme`).
 - Every component provides a `dark:` variant next to its light classes.
 - Keyboard focus uses a global `:focus-visible` outline (2px blue-500) defined
   in `frontend/src/index.css`.
@@ -209,14 +212,7 @@ outline-none` (compact variants use `p-1.5 text-xs`).
 
 `bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600
 rounded px-3 py-1.5 text-xs font-semibold shadow` (also used for `<select>`).
-Zoom in/out are grouped in a single bordered control; the minimap toggle is an
-`aria-pressed` button.
-
-### Node tooltip
-
-On hover over a node, a small `pointer-events-none` dark chip
-(`bg-slate-900/95 text-white text-[10px]`) shows the label, group and (when
-present) host/user. Hidden on `pan`/`zoom` and on selection.
+Zoom in/out are grouped in a single bordered control.
 
 ### Right pane tabs
 
@@ -258,9 +254,6 @@ Defined in `frontend/src/components/cytoscapeStyles.js`.
 - **Spotlight:** `.dimmed` → `opacity: 0.12` (selected neighbourhood only).
 - **Selection:** selected node gets a `#ffffff` border of width 4 and
   `overlay-opacity: 0`; selected edge width 4.
-- **Minimap:** `frontend/src/components/GraphMinimap.jsx` draws a canvas overview
-  (nodes coloured via `groupColor()`), a viewport rectangle, and recentres on
-  click. It guards against destroyed instances (`cy.destroyed()`).
 
 ---
 

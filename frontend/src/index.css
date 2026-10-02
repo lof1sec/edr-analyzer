@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 defaults the `dark:` variant to prefers-color-scheme. Opting into
+   class-based dark mode makes it follow the `dark` class on <html>, which is
+   what the theme toggle (useTheme) and the index.html pre-paint script drive. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Graph node colors are defined in components/cytoscapeStyles.js (NODE_GROUPS),
    not as Tailwind theme tokens, so there is a single source of truth. */
 

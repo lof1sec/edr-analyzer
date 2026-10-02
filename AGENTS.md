@@ -93,7 +93,6 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `frontend/src/components/AuthPage.jsx` — login / first-run setup gate.
 - `frontend/src/components/Toast.jsx` + `hooks/useToast.js` — app-wide toasts.
 - `frontend/src/components/EmptyState.jsx` — shared empty/placeholder state.
-- `frontend/src/components/GraphMinimap.jsx` — canvas overview of the graph.
 - `frontend/src/hooks/useTheme.js` — light/dark/system theme controller.
 - `frontend/src/hooks/useDebouncedValue.js` — debounce helper.
 

@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Map as MapIcon, Network } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from './EmptyState';
-import GraphMinimap from './GraphMinimap';
 import { useToast } from '../hooks/useToast';
 
 // Sub-component for individual copy buttons
@@ -149,11 +148,6 @@ export default function GraphView({ datasetId }) {
   // result is ignored instead of flashing the wrong matches.
   const [searchResult, setSearchResult] = useState({ q: '', ids: null });
 
-  // Cytoscape instance (for the minimap), hover tooltip and minimap toggle.
-  const [cyInstance, setCyInstance] = useState(null);
-  const [tooltip, setTooltip] = useState(null);
-  const [showMinimap, setShowMinimap] = useState(true);
-
   // Keep refs in sync so long-lived cytoscape listeners read fresh values.
   useEffect(() => { isRightPaneOpenRef.current = isRightPaneOpen; }, [isRightPaneOpen]);
   useEffect(() => { layoutModeRef.current = layoutMode; }, [layoutMode]);
@@ -178,7 +172,6 @@ export default function GraphView({ datasetId }) {
     setLayoutMode('force');
     setSearchResult({ q: '', ids: null });
     setError(null);
-    setCyInstance(null);
     const fetchGraph = async () => {
       setLoading(true);
       try {
@@ -423,10 +416,8 @@ export default function GraphView({ datasetId }) {
   const handleCy = useCallback((cy) => {
     if (cyRef.current === cy) return;
     cyRef.current = cy;
-    setCyInstance(cy);
 
     const onElementTap = (event) => {
-      setTooltip(null);
       setSelectedLogs([]);
       setSelectedNode(event.target.data());
       if (!isRightPaneOpenRef.current) {
@@ -437,19 +428,11 @@ export default function GraphView({ datasetId }) {
 
     const onBackgroundTap = (event) => {
       if (event.target === cy) {
-        setTooltip(null);
         setSelectedLogs([]);
         setSelectedNode(null);
         setFocusDepth(0);
       }
     };
-
-    const onNodeOver = (event) => {
-      const position = event.target.renderedPosition();
-      setTooltip({ x: position.x, y: position.y, data: event.target.data() });
-    };
-    const onNodeOut = () => setTooltip(null);
-    const hideTooltip = () => setTooltip(null);
 
     // Capture the initial force layout once per dataset so we can snap back to
     // it when the user switches layouts and returns.
@@ -464,9 +447,6 @@ export default function GraphView({ datasetId }) {
     cy.on('tap', 'node', onElementTap);
     cy.on('tap', 'edge', onElementTap);
     cy.on('tap', onBackgroundTap);
-    cy.on('mouseover', 'node', onNodeOver);
-    cy.on('mouseout', 'node', onNodeOut);
-    cy.on('pan zoom', hideTooltip);
     cy.on('layoutstop', onLayoutStop);
   }, []);
 
@@ -608,19 +588,6 @@ export default function GraphView({ datasetId }) {
                 <ZoomIn size={16} />
               </button>
             </div>
-            <button
-                onClick={() => setShowMinimap((value) => !value)}
-                aria-pressed={showMinimap}
-                className={`flex items-center border rounded px-2.5 py-1.5 shadow transition-colors ${
-                  showMinimap
-                    ? 'bg-blue-50 text-blue-600 border-blue-300 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800'
-                    : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
-                }`}
-                title="Toggle minimap"
-                aria-label="Toggle minimap"
-            >
-                <MapIcon size={16} />
-            </button>
         </div>
 
         {/* Legend */}
@@ -652,30 +619,6 @@ export default function GraphView({ datasetId }) {
               title="Empty graph"
               description="This dataset produced no graph elements to display."
             />
-          </div>
-        )}
-
-        {showMinimap && cyInstance && <GraphMinimap cy={cyInstance} />}
-
-        {tooltip && (
-          <div
-            className="absolute z-20 max-w-xs pointer-events-none rounded bg-slate-900/95 text-white text-[10px] px-2 py-1 shadow-lg"
-            style={{ left: tooltip.x + 12, top: tooltip.y + 12 }}
-          >
-            <p className="font-semibold truncate">
-              {tooltip.data.label || tooltip.data.title || tooltip.data.id}
-            </p>
-            {tooltip.data.group && (
-              <p className="text-slate-300">
-                {NODE_GROUPS.find((g) => g.group === tooltip.data.group)?.label || tooltip.data.group}
-              </p>
-            )}
-            {tooltip.data.hostname && (
-              <p className="text-slate-400 truncate">Host: {tooltip.data.hostname}</p>
-            )}
-            {tooltip.data.username && (
-              <p className="text-slate-400 truncate">User: {tooltip.data.username}</p>
-            )}
           </div>
         )}
       </div>
