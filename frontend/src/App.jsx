@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
+import { api } from './api/client';
 
 function App() {
   const [datasets, setDatasets] = useState([]);
@@ -10,8 +11,7 @@ function App() {
 
   const fetchDatasets = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/datasets`);
-      const data = await res.json();
+      const data = await api.listDatasets();
       setDatasets(data);
     } catch (err) {
       console.error(err);

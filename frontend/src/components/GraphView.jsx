@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import cytoscape from 'cytoscape';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { Filter, X, Copy, Check } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
+import { api } from '../api/client';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 // Sub-component for individual copy buttons
 const CopyButton = ({ textToCopy }) => {
@@ -25,6 +26,76 @@ const CopyButton = ({ textToCopy }) => {
   );
 };
 
+function getLayoutConfig(mode, initialPositions, selectedNode) {
+  switch (mode) {
+    case 'tree':
+      return {
+        name: 'breadthfirst',
+        directed: true,
+        spacingFactor: 1.5,
+        fit: true,
+        padding: 30,
+        animate: true,
+        animationDuration: 300,
+        transform: function (node, position) {
+          // Flip x and y to create a Left-to-Right tree instead of Top-to-Bottom
+          return { x: position.y, y: position.x };
+        }
+      };
+    case 'centered':
+      return {
+        name: 'concentric',
+        fit: true,
+        padding: 30,
+        minNodeSpacing: 100,
+        avoidOverlap: true,
+        animate: true,
+        animationDuration: 300,
+        concentric: (node) => {
+          // Center on selected node if one exists
+          if (selectedNode && selectedNode.id === node.id()) {
+            return 100;
+          }
+          // Otherwise use degree centrality
+          return node.degree();
+        },
+        levelWidth: () => 1
+      };
+    case 'force':
+    default:
+      // If we already saved the initial force-directed positions, snap back to them immediately
+      if (initialPositions && Object.keys(initialPositions).length > 0) {
+        return {
+          name: 'preset',
+          positions: initialPositions,
+          fit: true,
+          padding: 30,
+          animate: true,
+          animationDuration: 300
+        };
+      }
+
+      return {
+        name: 'cose',
+        idealEdgeLength: 100,
+        nodeOverlap: 20,
+        refresh: 20,
+        fit: true,
+        padding: 30,
+        randomize: false,
+        componentSpacing: 100,
+        nodeRepulsion: 400000,
+        edgeElasticity: 100,
+        nestingFactor: 5,
+        gravity: 80,
+        numIter: 1000,
+        initialTemp: 200,
+        coolingFactor: 0.95,
+        minTemp: 1.0
+      };
+  }
+}
+
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -38,6 +109,7 @@ export default function GraphView({ datasetId }) {
   const [eventTypes, setEventTypes] = useState({});
   const [users, setUsers] = useState({});
   const [pids, setPids] = useState({});
+  const debouncedGlobalSearch = useDebouncedValue(globalSearch, 250);
 
   // Local Filter Searches
   const [eventTypeSearch, setEventTypeSearch] = useState('');
@@ -70,8 +142,7 @@ export default function GraphView({ datasetId }) {
     const fetchGraph = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/graph/${datasetId}`);
-        const data = await res.json();
+        const data = await api.getGraph(datasetId);
 
         const uniqueEvents = new Set();
         const uniqueUsers = new Set();
@@ -115,7 +186,7 @@ export default function GraphView({ datasetId }) {
     cy.batch(() => {
       cy.elements().removeClass('hidden');
 
-      const terms = globalSearch.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+      const terms = debouncedGlobalSearch.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
 
       // Node filtering
       cy.nodes().forEach(node => {
@@ -192,85 +263,22 @@ export default function GraphView({ datasetId }) {
           }
       })
     });
-  }, [globalSearch, eventTypes, users, pids, elements, manuallyHidden]);
+  }, [debouncedGlobalSearch, eventTypes, users, pids, elements, manuallyHidden]);
 
-  const getLayoutConfig = (mode, cy, selectedNode) => {
-    switch(mode) {
-      case 'tree':
-        return {
-          name: 'breadthfirst',
-          directed: true,
-          spacingFactor: 1.5,
-          fit: true,
-          padding: 30,
-          animate: true,
-          animationDuration: 300,
-          transform: function (node, position) {
-            // Flip x and y to create a Left-to-Right tree instead of Top-to-Bottom
-            return { x: position.y, y: position.x };
-          }
-        };
-      case 'centered':
-        return {
-          name: 'concentric',
-          fit: true,
-          padding: 30,
-          minNodeSpacing: 100,
-          avoidOverlap: true,
-          animate: true,
-          animationDuration: 300,
-          concentric: (node) => {
-             // Center on selected node if one exists
-             if (selectedNode && selectedNode.id === node.id()) {
-               return 100;
-             }
-             // Otherwise use degree centrality
-             return node.degree();
-          },
-          levelWidth: (nodes) => 1
-        };
-      case 'force':
-      default:
-        // If we already saved the initial force-directed positions, snap back to them immediately
-        if (Object.keys(initialPositions.current).length > 0) {
-           return {
-             name: 'preset',
-             positions: initialPositions.current,
-             fit: true,
-             padding: 30,
-             animate: true,
-             animationDuration: 300
-           };
-        }
+  const centeredOn = layoutMode === 'centered' ? selectedNode : null;
 
-        return {
-          name: 'cose',
-          idealEdgeLength: 100,
-          nodeOverlap: 20,
-          refresh: 20,
-          fit: true,
-          padding: 30,
-          randomize: false,
-          componentSpacing: 100,
-          nodeRepulsion: 400000,
-          edgeElasticity: 100,
-          nestingFactor: 5,
-          gravity: 80,
-          numIter: 1000,
-          initialTemp: 200,
-          coolingFactor: 0.95,
-          minTemp: 1.0
-        };
-    }
-  };
-
-  const layout = getLayoutConfig(layoutMode, cyRef.current, selectedNode);
+  // Memoise the layout object: react-cytoscapejs re-runs the layout whenever
+  // the prop reference changes, so a fresh object on every render (e.g. when
+  // merely selecting a node) caused constant re-layouts.
+  const layout = useMemo(
+    () => getLayoutConfig(layoutMode, initialPositions.current, centeredOn),
+    [layoutMode, centeredOn]
+  );
 
   const applyLayout = (mode) => {
+    // Updating the mode changes the memoised layout prop above, which makes
+    // react-cytoscapejs run the new layout. No manual run needed.
     setLayoutMode(mode);
-    if (cyRef.current) {
-        cyRef.current.layout(getLayoutConfig(mode, cyRef.current, selectedNode)).run();
-    }
   }
 
   const fitGraph = () => {

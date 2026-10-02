@@ -1,5 +1,6 @@
 import React from 'react';
 import { Upload, X, Database, Menu } from 'lucide-react';
+import { api } from '../api/client';
 
 export default function Sidebar({
   datasets,
@@ -21,19 +22,10 @@ export default function Sidebar({
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/datasets/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (response.ok) {
-        await fetchDatasets();
-      } else {
-        alert('Upload failed.');
-      }
+      await api.uploadDataset(formData);
+      await fetchDatasets();
     } catch (error) {
-      console.error(error);
-      alert('Upload failed due to network error.');
+      alert(error.message || 'Upload failed.');
     } finally {
       setIsUploading(false);
       event.target.value = null;
@@ -44,9 +36,7 @@ export default function Sidebar({
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this dataset?')) return;
     try {
-      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/datasets/${id}`, {
-        method: 'DELETE'
-      });
+      await api.deleteDataset(id);
       if (activeDataset === id) setActiveDataset(null);
       fetchDatasets();
     } catch (err) {
