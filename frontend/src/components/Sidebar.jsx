@@ -1,7 +1,25 @@
 import React, { useState } from 'react';
-import { Upload, X, Database, Menu, LogOut, KeyRound } from 'lucide-react';
+import {
+  Upload,
+  X,
+  Database,
+  Menu,
+  LogOut,
+  KeyRound,
+  Sun,
+  Moon,
+  Monitor,
+} from 'lucide-react';
 import { api } from '../api/client';
 import ChangePasswordModal from './ChangePasswordModal';
+import EmptyState from './EmptyState';
+import { useToast } from '../hooks/useToast';
+
+const THEME_META = {
+  light: { Icon: Sun, label: 'Light' },
+  dark: { Icon: Moon, label: 'Dark' },
+  system: { Icon: Monitor, label: 'System' },
+};
 
 export default function Sidebar({
   datasets,
@@ -13,25 +31,28 @@ export default function Sidebar({
   isOpen,
   setIsOpen,
   username,
-  onLogout
+  onLogout,
+  theme,
+  onCycleTheme,
 }) {
-  const [uploadError, setUploadError] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const toast = useToast();
+  const { Icon: ThemeIcon, label: themeLabel } = THEME_META[theme] || THEME_META.system;
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     setIsUploading(true);
-    setUploadError(null);
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      await api.uploadDataset(formData);
+      const result = await api.uploadDataset(formData);
       await fetchDatasets();
+      toast.success(result?.message || 'Dataset uploaded.');
     } catch (error) {
-      setUploadError(error.message || 'Upload failed.');
+      toast.error(error.message || 'Upload failed.');
     } finally {
       setIsUploading(false);
       event.target.value = null;
@@ -45,26 +66,37 @@ export default function Sidebar({
       await api.deleteDataset(id);
       if (activeDataset === id) setActiveDataset(null);
       fetchDatasets();
+      toast.success('Dataset deleted.');
     } catch (err) {
-      console.error(err);
+      toast.error(err.message || 'Could not delete the dataset.');
     }
   };
 
   if (!isOpen) {
     return (
       <>
-        <div className="w-16 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
+        <div className="w-16 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-30 shrink-0">
           <button
             onClick={() => setIsOpen(true)}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
-            title="Open Sidebar"
+            title="Open sidebar"
+            aria-label="Open sidebar"
           >
             <Menu size={24} />
           </button>
           <button
-            onClick={() => setShowChangePassword(true)}
+            onClick={onCycleTheme}
             className="mt-auto p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title={`Theme: ${themeLabel}`}
+            aria-label={`Theme: ${themeLabel}. Click to change.`}
+          >
+            <ThemeIcon size={20} />
+          </button>
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
             title="Change password"
+            aria-label="Change password"
           >
             <KeyRound size={20} />
           </button>
@@ -72,6 +104,7 @@ export default function Sidebar({
             onClick={onLogout}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
             title="Sign out"
+            aria-label="Sign out"
           >
             <LogOut size={20} />
           </button>
@@ -84,17 +117,26 @@ export default function Sidebar({
   }
 
   return (
-    <div className="w-80 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-300 z-20 shrink-0">
+    <div className="w-80 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-all duration-300 z-30 shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:shadow-xl">
       <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Database size={24} className="text-blue-500" />
+          <Database size={24} className="text-blue-500" aria-hidden="true" />
           <h1 className="text-xl font-bold truncate">EDR Analyzer</h1>
         </div>
         <div className="flex items-center gap-1">
           <button
+            onClick={onCycleTheme}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title={`Theme: ${themeLabel}. Click to change.`}
+            aria-label={`Theme: ${themeLabel}. Click to change.`}
+          >
+            <ThemeIcon size={20} />
+          </button>
+          <button
             onClick={() => setIsOpen(false)}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
-            title="Collapse Sidebar"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
           >
             <Menu size={20} />
           </button>
@@ -104,17 +146,21 @@ export default function Sidebar({
       <div className="p-4 border-b border-slate-200 dark:border-slate-700">
         <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-700 dark:border-slate-600 dark:hover:bg-slate-600 transition-colors">
           <div className="flex flex-col items-center justify-center pt-5 pb-6">
-            <Upload className="w-8 h-8 mb-3 text-slate-500 dark:text-slate-400" />
+            <Upload className="w-8 h-8 mb-3 text-slate-500 dark:text-slate-400" aria-hidden="true" />
             <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
               <span className="font-semibold">Click to upload CSV</span>
             </p>
-            {isUploading && <p className="text-xs text-blue-500 font-bold">Uploading & Parsing...</p>}
+            {isUploading && <p className="text-xs text-blue-500 font-bold">Uploading &amp; parsing…</p>}
           </div>
-          <input type="file" className="hidden" accept=".csv" onChange={handleFileUpload} disabled={isUploading} />
+          <input
+            type="file"
+            className="hidden"
+            accept=".csv"
+            onChange={handleFileUpload}
+            disabled={isUploading}
+            aria-label="Upload a CSV log export"
+          />
         </label>
-        {uploadError && (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400 break-words">{uploadError}</p>
-        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
@@ -136,13 +182,22 @@ export default function Sidebar({
                 <p className="font-medium text-sm truncate" title={ds.name}>{ds.name}</p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{ds.log_count} logs</p>
               </div>
-              <button onClick={(e) => handleDelete(ds.id, e)} className="text-slate-400 hover:text-red-500 transition-colors shrink-0">
+              <button
+                onClick={(e) => handleDelete(ds.id, e)}
+                className="text-slate-400 hover:text-red-500 transition-colors shrink-0"
+                title="Delete dataset"
+                aria-label={`Delete dataset ${ds.name}`}
+              >
                 <X size={16} />
               </button>
             </div>
           ))}
           {datasets.length === 0 && (
-            <p className="text-sm text-slate-500 dark:text-slate-400 text-center italic mt-10">No datasets found.</p>
+            <EmptyState
+              icon={Database}
+              title="No datasets yet"
+              description="Upload a Defender or Falcon export to build a graph."
+            />
           )}
         </div>
       </div>
@@ -156,6 +211,7 @@ export default function Sidebar({
             onClick={() => setShowChangePassword(true)}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
             title="Change password"
+            aria-label="Change password"
           >
             <KeyRound size={18} />
           </button>
@@ -163,6 +219,7 @@ export default function Sidebar({
             onClick={onLogout}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
             title="Sign out"
+            aria-label="Sign out"
           >
             <LogOut size={18} />
           </button>

@@ -3,8 +3,10 @@ import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
 import AuthPage from './components/AuthPage';
 import { api } from './api/client';
+import { useTheme } from './hooks/useTheme';
 
 function App() {
+  const { theme, cycleTheme } = useTheme();
   const [authState, setAuthState] = useState({
     loading: true,
     authenticated: false,
@@ -73,7 +75,7 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
       <Sidebar
         datasets={datasets}
         activeDataset={activeDataset}
@@ -85,6 +87,8 @@ function App() {
         setIsOpen={setIsSidebarOpen}
         username={authState.username}
         onLogout={handleLogout}
+        theme={theme}
+        onCycleTheme={cycleTheme}
       />
       <GraphView
         datasetId={activeDataset}

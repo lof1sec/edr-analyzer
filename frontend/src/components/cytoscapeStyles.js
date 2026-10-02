@@ -15,6 +15,9 @@ export const NODE_GROUPS = [
   { group: 'alert', label: 'Alert', shape: 'star', color: '#b30000', border: '#ff0000', borderWidth: 3 },
 ];
 
+export const groupColor = (group) =>
+  NODE_GROUPS.find((entry) => entry.group === group)?.color || '#64748b';
+
 const groupStyle = ({ group, shape, color, border, borderWidth }) => ({
   selector: `node[group="${group}"]`,
   style: {
