@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import EmptyState from './EmptyState';
+import { useToast } from '../hooks/useToast';
 
 // Sub-component for individual copy buttons
 const CopyButton = ({ textToCopy }) => {
   const [copied, setCopied] = useState(false);
+  const toast = useToast();
 
   const handleCopy = () => {
     navigator.clipboard.writeText(textToCopy);
     setCopied(true);
+    toast.success('Copied to clipboard.');
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -20,6 +24,7 @@ const CopyButton = ({ textToCopy }) => {
       onClick={handleCopy}
       className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-slate-600 dark:text-slate-300"
       title="Copy JSON"
+      aria-label="Copy JSON"
     >
       {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
     </button>
@@ -393,6 +398,15 @@ export default function GraphView({ datasetId }) {
       if(cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden'), 30);
   };
 
+  const zoomBy = (factor) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.zoom({
+      level: cy.zoom() * factor,
+      renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+    });
+  };
+
   // react-cytoscapejs invokes this on every mount and update. Listeners are
   // attached here — right where the instance is created — and guarded by
   // instance identity. This mirrors the original (working) pattern while
@@ -457,16 +471,21 @@ export default function GraphView({ datasetId }) {
 
   if (!datasetId) {
     return (
-      <div className="flex-1 flex items-center justify-center text-slate-400">
-        Select or upload a dataset to view the graph.
+      <div className="flex-1 flex items-center justify-center">
+        <EmptyState
+          icon={Network}
+          title="No dataset selected"
+          description="Select a dataset from the sidebar or upload a CSV export to build a graph."
+        />
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex flex-col items-center justify-center gap-3">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Loading graph…</p>
       </div>
     );
   }
@@ -498,6 +517,22 @@ export default function GraphView({ datasetId }) {
   // Backend sends aggregated counts; show the most frequent first.
   const unmappedEntries = Object.entries(unmappedEvents).sort((a, b) => b[1] - a[1]);
 
+  const filteredEventTypes = Object.keys(eventTypes)
+    .sort()
+    .filter((evt) => evt.toLowerCase().includes(eventTypeSearch.toLowerCase()));
+  const filteredUsers = Object.keys(users)
+    .sort()
+    .filter((usr) => usr.toLowerCase().includes(userSearch.toLowerCase()));
+  const pidLabel = (pid) => {
+    const node = elementsById.get(pid);
+    return node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
+  };
+  const filteredPids = Object.keys(pids)
+    .sort()
+    .filter((pid) => pidLabel(pid).toLowerCase().includes(pidSearch.toLowerCase()));
+
+  const searchHasNoMatches = Boolean(searchQuery && matchedIds && matchedIds.size === 0);
+
   return (
     <div className="flex-1 flex relative overflow-hidden w-full h-full">
 
@@ -509,6 +544,7 @@ export default function GraphView({ datasetId }) {
             <select
                 value={layoutMode}
                 onChange={(e) => applyLayout(e.target.value)}
+                aria-label="Graph layout"
                 className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors outline-none"
             >
                 <option value="force">Layout: Force-directed</option>
@@ -520,6 +556,7 @@ export default function GraphView({ datasetId }) {
                 onChange={(e) => setFocusDepth(Number(e.target.value))}
                 disabled={!selectedNode}
                 title={selectedNode ? 'Limit the graph to the selected node\'s neighbourhood' : 'Select a node to focus'}
+                aria-label="Focus depth"
                 className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors outline-none disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 <option value={0}>Focus: Entire graph</option>
@@ -529,9 +566,28 @@ export default function GraphView({ datasetId }) {
             <button
                 onClick={fitGraph}
                 className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                title="Fit the graph to the viewport"
             >
                 Fit Graph
             </button>
+            <div className="flex items-center bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow overflow-hidden">
+              <button
+                onClick={() => zoomBy(1 / 1.3)}
+                className="px-2 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                title="Zoom out"
+                aria-label="Zoom out"
+              >
+                <ZoomOut size={16} />
+              </button>
+              <button
+                onClick={() => zoomBy(1.3)}
+                className="px-2 py-1.5 border-l border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                title="Zoom in"
+                aria-label="Zoom in"
+              >
+                <ZoomIn size={16} />
+              </button>
+            </div>
         </div>
 
         {/* Legend */}
@@ -555,33 +611,48 @@ export default function GraphView({ datasetId }) {
           textureOnViewport={true}
           cy={handleCy}
         />
+
+        {elements.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <EmptyState
+              icon={Network}
+              title="Empty graph"
+              description="This dataset produced no graph elements to display."
+            />
+          </div>
+        )}
       </div>
 
       {/* Right Pane: Filters OR Details depending on state */}
       {!isRightPaneOpen ? (
-        <div className="w-16 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
+        <div className="w-16 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-30 shrink-0">
           <button
             onClick={() => setIsRightPaneOpen(true)}
             className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
-            title="Open Filters & Details"
+            title="Open filters and details"
+            aria-label="Open filters and details"
           >
             <Filter size={24} />
           </button>
         </div>
       ) : (
         <div
-          className="w-80 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden transition-all duration-300 z-10 shrink-0 shadow-lg relative"
+          className="w-80 h-full bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden transition-all duration-300 z-30 shrink-0 shadow-lg relative max-md:absolute max-md:inset-y-0 max-md:right-0"
         >
 
           {/* Toggle View Header */}
-          <div className="flex border-b border-slate-200 dark:border-slate-700">
+          <div className="flex border-b border-slate-200 dark:border-slate-700" role="tablist" aria-label="Graph panels">
              <button
+               role="tab"
+               aria-selected={activeTab === 'filters'}
                className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'filters' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
                onClick={() => setActiveTab('filters')}
              >
                Filters
              </button>
              <button
+               role="tab"
+               aria-selected={activeTab === 'details'}
                className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'details' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'} ${!selectedNode && 'opacity-50 cursor-not-allowed'}`}
                onClick={() => selectedNode && setActiveTab('details')}
                disabled={!selectedNode}
@@ -589,6 +660,8 @@ export default function GraphView({ datasetId }) {
                Node Details
              </button>
              <button
+               role="tab"
+               aria-selected={activeTab === 'unmapped'}
                className={`flex-1 p-2 text-xs font-bold transition-colors ${activeTab === 'unmapped' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
                onClick={() => setActiveTab('unmapped')}
              >
@@ -597,7 +670,8 @@ export default function GraphView({ datasetId }) {
              <button
                onClick={() => setIsRightPaneOpen(false)}
                className="p-3 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors border-l border-slate-200 dark:border-slate-700 shrink-0"
-               title="Collapse Pane"
+               title="Collapse panel"
+               aria-label="Collapse panel"
              >
                <X size={20} />
              </button>
@@ -707,14 +781,21 @@ export default function GraphView({ datasetId }) {
               )}
 
               <div>
-                <label className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
+                <label htmlFor="global-search" className="font-semibold text-xs text-slate-500 uppercase mb-2 block">Global Search</label>
                 <input
+                  id="global-search"
                   type="text"
                   value={globalSearch}
                   onChange={(e) => setGlobalSearch(e.target.value)}
                   placeholder="Search text or PID..."
+                  aria-label="Global search"
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none"
                 />
+                {searchHasNoMatches && (
+                  <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                    No elements match “{searchQuery}”.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -733,14 +814,16 @@ export default function GraphView({ datasetId }) {
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
                 />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(eventTypes).sort()
-                    .filter(evt => evt.toLowerCase().includes(eventTypeSearch.toLowerCase()))
-                    .map(evt => (
-                    <label key={evt} className="flex items-center gap-2 cursor-pointer text-xs">
-                      <input type="checkbox" checked={eventTypes[evt]} onChange={() => toggleEvent(evt)} className="rounded text-blue-500" />
-                      <span className="truncate" title={evt}>{evt}</span>
-                    </label>
-                  ))}
+                  {filteredEventTypes.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">No matches.</p>
+                  ) : (
+                    filteredEventTypes.map(evt => (
+                      <label key={evt} className="flex items-center gap-2 cursor-pointer text-xs">
+                        <input type="checkbox" checked={eventTypes[evt]} onChange={() => toggleEvent(evt)} className="rounded text-blue-500" />
+                        <span className="truncate" title={evt}>{evt}</span>
+                      </label>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -760,14 +843,16 @@ export default function GraphView({ datasetId }) {
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
                 />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(users).sort()
-                    .filter(usr => usr.toLowerCase().includes(userSearch.toLowerCase()))
-                    .map(usr => (
-                    <label key={usr} className="flex items-center gap-2 cursor-pointer text-xs">
-                      <input type="checkbox" checked={users[usr]} onChange={() => toggleUser(usr)} className="rounded text-blue-500" />
-                      <span className="truncate" title={usr}>{usr}</span>
-                    </label>
-                  ))}
+                  {filteredUsers.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">No matches.</p>
+                  ) : (
+                    filteredUsers.map(usr => (
+                      <label key={usr} className="flex items-center gap-2 cursor-pointer text-xs">
+                        <input type="checkbox" checked={users[usr]} onChange={() => toggleUser(usr)} className="rounded text-blue-500" />
+                        <span className="truncate" title={usr}>{usr}</span>
+                      </label>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -787,22 +872,19 @@ export default function GraphView({ datasetId }) {
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-1.5 mb-2 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
                 />
                 <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded custom-scrollbar">
-                  {Object.keys(pids).sort()
-                    .filter(pid => {
-                      const node = elementsById.get(pid);
-                      const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
-                      return label.toLowerCase().includes(pidSearch.toLowerCase());
+                  {filteredPids.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">No matches.</p>
+                  ) : (
+                    filteredPids.map(pid => {
+                      const label = pidLabel(pid);
+                      return (
+                        <label key={pid} className="flex items-center gap-2 cursor-pointer text-xs">
+                          <input type="checkbox" checked={pids[pid]} onChange={() => togglePid(pid)} className="rounded text-blue-500" />
+                          <span className="truncate" title={label}>{label}</span>
+                        </label>
+                      );
                     })
-                    .map(pid => {
-                    const node = elementsById.get(pid);
-                    const label = node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
-                    return (
-                      <label key={pid} className="flex items-center gap-2 cursor-pointer text-xs">
-                        <input type="checkbox" checked={pids[pid]} onChange={() => togglePid(pid)} className="rounded text-blue-500" />
-                        <span className="truncate" title={label}>{label}</span>
-                      </label>
-                    );
-                  })}
+                  )}
                 </div>
               </div>
             </div>

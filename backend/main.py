@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 from starlette.middleware.sessions import SessionMiddleware
 
 from alembic import command
+from app import bootstrap
 from app.routers import auth, datasets, graph
 
 ALEMBIC_INI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
@@ -55,6 +56,8 @@ async def lifespan(app: FastAPI):
     while retries > 0:
         try:
             await asyncio.to_thread(run_migrations)
+            # The schema exists now; make sure the operator can always log in.
+            await asyncio.to_thread(bootstrap.seed_admin_user)
             print("Database migrations applied.")
             break
         except OperationalError:

@@ -127,12 +127,19 @@ out (6 for nodes, 5 for edges).
 
 ---
 
-## 5. Dark mode
+## 5. Dark mode & theming
 
-- Enabled by adding `class="dark"` to `<html>` (see `frontend/index.html`).
+- Themes: `light`, `dark`, `system`, controlled by `useTheme()`
+  (`frontend/src/hooks/useTheme.js`) and persisted in `localStorage`
+  (`edr-theme`). The sidebar's theme button cycles them.
+- The resolved theme toggles the `dark` class on `<html>`; an inline script in
+  `frontend/index.html` applies it before first paint to avoid a flash.
+- `frontend/src/index.css` opts into class-based dark mode with
+  `@custom-variant dark (&:where(.dark, .dark *))` (Tailwind v4 otherwise keys
+  `dark:` off `prefers-color-scheme`).
 - Every component provides a `dark:` variant next to its light classes.
-- Do not use `prefers-color-scheme` directly; rely on the `.dark` class so the
-  theme is explicit and toggleable.
+- Keyboard focus uses a global `:focus-visible` outline (2px blue-500) defined
+  in `frontend/src/index.css`.
 
 ---
 
@@ -141,15 +148,30 @@ out (6 for nodes, 5 for edges).
 ### Auth gate (`frontend/src/components/AuthPage.jsx`)
 
 Full-screen, centered card (`max-w-sm`, `rounded-lg`, `shadow`) on the page
-background. Serves both the first-run "create admin" form and the login form.
-Inputs and the primary button reuse the shared styles (see Inputs / Buttons).
-Errors are inline (`text-xs text-red-600 dark:text-red-400`), never `alert()`.
+background. Normally shows the login form — the admin is provisioned from the
+environment (`POSTGRES_USER`/`POSTGRES_PASSWORD`); the "create admin" form is only
+a fallback when no credentials are configured. Inputs and the primary button
+reuse the shared styles (see Inputs / Buttons). Errors are inline
+(`text-xs text-red-600 dark:text-red-400`), never `alert()`.
 
 ### Change-password modal (`frontend/src/components/ChangePasswordModal.jsx`)
 
 Overlay (`fixed inset-0`, `bg-black/50`) with a centered `max-w-sm` card. Three
-password fields plus Cancel/Save; success swaps in an inline confirmation. Closes
+password fields plus Cancel/Save; on success it shows a toast and closes. Closes
 on backdrop click, the `X`, or Cancel. Opened from the sidebar's key button.
+
+### Toasts (`frontend/src/components/Toast.jsx`)
+
+Transient notifications in the bottom-right, provided app-wide via
+`ToastProvider` and consumed with `useToast()`. Variants `success`/`error`/`info`
+(coloured icon + border), auto-dismiss after 4s, `aria-live="polite"`. Use these
+instead of inline text or `alert()` for action feedback.
+
+### Empty states (`frontend/src/components/EmptyState.jsx`)
+
+Shared placeholder (`icon` + `title` + optional `description`/`action`) for empty
+lists and panels: no datasets, no dataset selected, empty graph, filter/search
+with no matches.
 
 ### Sidebar (`frontend/src/components/Sidebar.jsx`)
 
@@ -165,6 +187,10 @@ on backdrop click, the `X`, or Cancel. Opened from the sidebar's key button.
 - **Account footer:** the username (`text-xs`, muted) plus a ghost sign-out
   button pinned to the bottom (`border-t`); the collapsed rail shows a sign-out
   icon too.
+- **Theme button:** ghost icon (`Sun`/`Moon`/`Monitor`) in the header that cycles
+  light → dark → system.
+- **Responsive:** below `md` the expanded sidebar is an absolute overlay
+  (`max-md:absolute max-md:inset-y-0 max-md:left-0`) over the graph.
 
 ### Buttons
 
@@ -186,6 +212,7 @@ outline-none` (compact variants use `p-1.5 text-xs`).
 
 `bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600
 rounded px-3 py-1.5 text-xs font-semibold shadow` (also used for `<select>`).
+Zoom in/out are grouped in a single bordered control.
 
 ### Right pane tabs
 
@@ -248,5 +275,10 @@ Defined in `frontend/src/components/cytoscapeStyles.js`.
    only inside Cytoscape style definitions and `#222`/`#222`-like canvas
    backgrounds.
 5. Add `custom-scrollbar` to any new scroll container.
-6. Keep focus states visible (`focus:ring-1 focus:ring-blue-500`) for
-   accessibility.
+6. Keep focus states visible; the global `:focus-visible` outline plus
+   `focus:ring-1 focus:ring-blue-500` on inputs cover keyboard users.
+7. Accessibility: give every icon-only button an `aria-label` (and `title`),
+   use `role="tab"`/`aria-selected` for the panel tabs, and provide an `aria-label`
+   on inputs whose visible label is not associated.
+8. Responsive: the sidebar and right panel are overlays below `md`
+   (`max-md:absolute`), so the graph keeps the full width on small screens.

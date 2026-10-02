@@ -55,8 +55,8 @@ export default function AuthPage({ needsSetup, onAuthenticated }) {
         </div>
         <p className="text-sm text-slate-500 dark:text-slate-400">
           {isSetup
-            ? 'Create the administrator account to get started.'
-            : 'Sign in to continue.'}
+            ? 'Choose a username and password for the administrator account.'
+            : 'Sign in with the administrator credentials from your environment.'}
         </p>
 
         <div>
