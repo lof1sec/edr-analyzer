@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import Dataset, LogEvent
 from app.schemas import DatasetResponse
 from app.parsers.vendor import extract_event_type
+from app.routers import graph_cache
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
@@ -196,6 +197,10 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
         db.commit()
         raise
 
+    # A freshly uploaded dataset has no cached graph, but an id could be reused
+    # after a delete; drop any stale payload defensively.
+    graph_cache.invalidate(dataset.id)
+
     return {
         "message": f"Successfully uploaded and parsed {total_events} logs",
         "dataset_id": dataset.id,
@@ -235,4 +240,8 @@ def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
     )
     db.delete(dataset)
     db.commit()
+
+    # Free the cached graph so a reused dataset id never serves stale data.
+    graph_cache.invalidate(dataset_id)
+
     return {"message": "Dataset deleted successfully"}

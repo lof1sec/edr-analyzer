@@ -85,6 +85,17 @@ export const stylesheet = () => [
     }
   },
   {
+    // PowerShell command / command history artifacts (darker orange).
+    selector: 'node[group="commandline-exec"]',
+    style: {
+      'shape': 'rectangle',
+      'background-color': '#431407',
+      'border-color': '#c2410c',
+      'border-width': 1,
+      'color': '#fff'
+    }
+  },
+  {
     selector: 'node[group="alert"]',
     style: {
       'shape': 'star',
@@ -122,6 +133,27 @@ export const stylesheet = () => [
     selector: '.hidden',
     style: {
       'display': 'none'
+    }
+  },
+  {
+    // Spotlight: everything outside the selected element's neighbourhood.
+    selector: '.dimmed',
+    style: {
+      'opacity': 0.12
+    }
+  },
+  {
+    selector: 'node:selected',
+    style: {
+      'border-width': 4,
+      'border-color': '#ffffff',
+      'overlay-opacity': 0
+    }
+  },
+  {
+    selector: 'edge:selected',
+    style: {
+      'width': 4
     }
   }
 ];

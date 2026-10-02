@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { Filter, X, Copy, Check } from 'lucide-react';
 import { stylesheet } from './cytoscapeStyles';
@@ -26,7 +26,25 @@ const CopyButton = ({ textToCopy }) => {
   );
 };
 
-function getLayoutConfig(mode, initialPositions, selectedNode) {
+// Mirrors the colours in cytoscapeStyles.js so the legend cannot drift.
+const LEGEND_ITEMS = [
+  { label: 'Process', color: '#4d0000', border: '#ff4d4d' },
+  { label: 'File', color: '#00264d', border: '#4da6ff' },
+  { label: 'Module', color: '#4d0099', border: '#b366ff' },
+  { label: 'Registry', color: '#804000', border: '#ff9933' },
+  { label: 'Network', color: '#003333', border: '#00ffff' },
+  { label: 'Command line', color: '#332b00', border: '#ffcc00' },
+  { label: 'PowerShell', color: '#4d2e00', border: '#ff9900' },
+  { label: 'Command exec', color: '#431407', border: '#c2410c' },
+  { label: 'Alert', color: '#b30000', border: '#ff0000' },
+];
+
+// Above this many elements the physics simulation is capped and animations are
+// dropped so the layout stays interactive.
+const LARGE_GRAPH_THRESHOLD = 2000;
+
+function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0) {
+  const large = elementCount > LARGE_GRAPH_THRESHOLD;
   switch (mode) {
     case 'tree':
       return {
@@ -35,7 +53,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode) {
         spacingFactor: 1.5,
         fit: true,
         padding: 30,
-        animate: true,
+        animate: !large,
         animationDuration: 300,
         transform: function (node, position) {
           // Flip x and y to create a Left-to-Right tree instead of Top-to-Bottom
@@ -49,7 +67,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode) {
         padding: 30,
         minNodeSpacing: 100,
         avoidOverlap: true,
-        animate: true,
+        animate: !large,
         animationDuration: 300,
         concentric: (node) => {
           // Center on selected node if one exists
@@ -70,7 +88,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode) {
           positions: initialPositions,
           fit: true,
           padding: 30,
-          animate: true,
+          animate: !large,
           animationDuration: 300
         };
       }
@@ -79,7 +97,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode) {
         name: 'cose',
         idealEdgeLength: 100,
         nodeOverlap: 20,
-        refresh: 20,
+        refresh: large ? 5 : 20,
         fit: true,
         padding: 30,
         randomize: false,
@@ -88,10 +106,11 @@ function getLayoutConfig(mode, initialPositions, selectedNode) {
         edgeElasticity: 100,
         nestingFactor: 5,
         gravity: 80,
-        numIter: 1000,
+        numIter: large ? 250 : 1000,
         initialTemp: 200,
         coolingFactor: 0.95,
-        minTemp: 1.0
+        minTemp: 1.0,
+        animate: !large
       };
   }
 }
@@ -100,9 +119,15 @@ export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [selectedLogs, setSelectedLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [layoutMode, setLayoutMode] = useState('force');
+  const [focusDepth, setFocusDepth] = useState(0);
   const cyRef = useRef(null);
   const initialPositions = useRef({});
+  const isRightPaneOpenRef = useRef(true);
+  const layoutModeRef = useRef(layoutMode);
+  const rawLogsCache = useRef(new Map());
 
   // Filters state
   const [globalSearch, setGlobalSearch] = useState('');
@@ -125,6 +150,14 @@ export default function GraphView({ datasetId }) {
   const [activeTab, setActiveTab] = useState('filters'); // 'filters', 'details', 'unmapped'
   const [unmappedEvents, setUnmappedEvents] = useState([]);
 
+  // Server-side search result. Stored with the query it belongs to so a stale
+  // result is ignored instead of flashing the wrong matches.
+  const [searchResult, setSearchResult] = useState({ q: '', ids: null });
+
+  // Keep refs in sync so long-lived cytoscape listeners read fresh values.
+  useEffect(() => { isRightPaneOpenRef.current = isRightPaneOpen; }, [isRightPaneOpen]);
+  useEffect(() => { layoutModeRef.current = layoutMode; }, [layoutMode]);
+
   const elementsById = useMemo(() => {
     const map = new Map();
     for (const el of elements) {
@@ -138,7 +171,12 @@ export default function GraphView({ datasetId }) {
   useEffect(() => {
     if (!datasetId) return;
     initialPositions.current = {}; // Reset positions on new dataset
+    rawLogsCache.current = new Map();
+    setSelectedNode(null);
+    setSelectedLogs([]);
+    setFocusDepth(0);
     setLayoutMode('force');
+    setSearchResult({ q: '', ids: null });
     const fetchGraph = async () => {
       setLoading(true);
       try {
@@ -179,33 +217,73 @@ export default function GraphView({ datasetId }) {
     fetchGraph();
   }, [datasetId]);
 
-  // Apply filters whenever state changes
+  // The backend resolves the global search against its cached search index, so
+  // raw events never reach the browser. Storing the query with the result lets
+  // us ignore stale responses.
+  useEffect(() => {
+    const query = debouncedGlobalSearch.trim();
+    if (!datasetId || !query) return;
+    let cancelled = false;
+    api.searchGraph(datasetId, query)
+      .then(res => {
+        if (!cancelled) setSearchResult({ q: query, ids: new Set(res.ids || []) });
+      })
+      .catch(err => {
+        console.error(err);
+      });
+    return () => { cancelled = true; };
+  }, [datasetId, debouncedGlobalSearch]);
+
+  const searchQuery = debouncedGlobalSearch.trim();
+  const matchedIds = searchQuery && searchResult.q === searchQuery ? searchResult.ids : null;
+
+  // Apply filters whenever state changes. Element data holds no raw events, so
+  // filtering is a pure, cheap pass over the precomputed search result.
   useEffect(() => {
     if (!cyRef.current) return;
     const cy = cyRef.current;
     cy.batch(() => {
-      cy.elements().removeClass('hidden');
+      cy.elements().removeClass('hidden dimmed');
 
-      const terms = debouncedGlobalSearch.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+      const passesManualAndIdentity = (data) => {
+        if (data.id && manuallyHidden.has(data.id)) return false;
+        if (data.group === 'process') {
+          if (data.username && users[data.username] === false) return false;
+          if (data.id && pids[data.id] === false) return false;
+        }
+        return true;
+      };
+
+      // Depth-limited focus around the selected node (0 = entire graph).
+      let focusIds = null;
+      if (focusDepth > 0 && selectedNode && selectedNode.id) {
+        const selected = cy.getElementById(selectedNode.id);
+        if (selected.nonempty()) {
+          if (selected.isNode()) {
+            let visited = selected;
+            for (let hop = 0; hop < focusDepth; hop += 1) {
+              const next = visited.connectedEdges().connectedNodes().not(visited);
+              if (next.empty()) break;
+              visited = visited.union(next);
+            }
+            focusIds = new Set(visited.map(el => el.id()));
+          } else {
+            focusIds = new Set([selected.id(), selected.source().id(), selected.target().id()]);
+          }
+        }
+      }
 
       // Node filtering
       cy.nodes().forEach(node => {
-        let isVisible = true;
         const d = node.data();
+        let isVisible = passesManualAndIdentity(d);
 
-        if (d.id && manuallyHidden.has(d.id)) {
+        if (isVisible && matchedIds && !matchedIds.has(d.id)) {
           isVisible = false;
         }
 
-        if (isVisible && d.group === 'process') {
-          if (d.username && users[d.username] === false) isVisible = false;
-          if (d.id && pids[d.id] === false) isVisible = false;
-        }
-
-        if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + rawLogsStr).toLowerCase();
-          isVisible = terms.some(term => text.includes(term));
+        if (isVisible && focusIds && !focusIds.has(d.id)) {
+          isVisible = false;
         }
 
         if (!isVisible) {
@@ -216,32 +294,20 @@ export default function GraphView({ datasetId }) {
       // Edge filtering
       cy.edges().forEach(edge => {
         const d = edge.data();
-        let isVisible = true;
+        let isVisible = passesManualAndIdentity(d);
 
-        if (d.id && manuallyHidden.has(d.id)) {
+        if (isVisible && d.event_simplename && eventTypes[d.event_simplename] === false) {
           isVisible = false;
         }
 
-        if (d.event_simplename && eventTypes[d.event_simplename] === false) {
-          isVisible = false;
-        }
-
-        // Global search match for edges
-        if (isVisible && terms.length > 0) {
-          const rawLogsStr = d.raw_logs ? JSON.stringify(d.raw_logs).toLowerCase() : "";
-          const text = ((d.title || "") + " " + (d.label || "") + " " + (d.id || "") + " " + (d.event_simplename || "") + " " + rawLogsStr).toLowerCase();
-          const edgeMatches = terms.some(term => text.includes(term));
-
-          if (edgeMatches) {
-            // If edge matches, reveal its source and target nodes so the edge can be drawn,
-            // EXCEPT if they are manually hidden.
-            if (!manuallyHidden.has(edge.source().id())) {
-              edge.source().removeClass('hidden');
+        if (isVisible && matchedIds && matchedIds.has(d.id)) {
+          // If the edge matches, reveal its source and target so the edge can
+          // be drawn, but only when they pass the manual/identity filters.
+          [edge.source(), edge.target()].forEach(endpoint => {
+            if (passesManualAndIdentity(endpoint.data())) {
+              endpoint.removeClass('hidden');
             }
-            if (!manuallyHidden.has(edge.target().id())) {
-              edge.target().removeClass('hidden');
-            }
-          }
+          });
         }
 
         if (edge.source().hasClass('hidden') || edge.target().hasClass('hidden')) {
@@ -255,15 +321,61 @@ export default function GraphView({ datasetId }) {
 
       // Cleanup orphan artifacts
       cy.nodes().forEach(node => {
-          if(node.data('group') !== 'process' && !node.hasClass('hidden')){
-              const visibleEdges = node.connectedEdges().filter(e => !e.hasClass('hidden'));
-              if(visibleEdges.length === 0){
-                  node.addClass('hidden');
-              }
+        if (node.data('group') !== 'process' && !node.hasClass('hidden')) {
+          const visibleEdges = node.connectedEdges().filter(e => !e.hasClass('hidden'));
+          if (visibleEdges.length === 0) {
+            node.addClass('hidden');
           }
-      })
+        }
+      });
+
+      // Spotlight the selected element's neighbourhood.
+      if (selectedNode && selectedNode.id) {
+        const selected = cy.getElementById(selectedNode.id);
+        if (selected.nonempty()) {
+          const focusElements = (selected.isNode()
+            ? selected.closedNeighborhood()
+            : selected.union(selected.source()).union(selected.target())
+          ).filter(el => !el.hasClass('hidden'));
+          cy.elements().not(focusElements).addClass('dimmed');
+        }
+      }
     });
-  }, [debouncedGlobalSearch, eventTypes, users, pids, elements, manuallyHidden]);
+  }, [matchedIds, eventTypes, users, pids, elements, manuallyHidden, selectedNode, focusDepth]);
+
+  // Fetch raw evidence for the selected element on demand and cache it. The
+  // previous element's logs are cleared from the tap handlers, not here, so
+  // this effect never calls setState synchronously on its own.
+  useEffect(() => {
+    if (!datasetId || !selectedNode || !selectedNode.id || activeTab !== 'details') {
+      return;
+    }
+
+    const elementId = selectedNode.id;
+    const cached = rawLogsCache.current.get(elementId);
+    if (cached) {
+      setSelectedLogs(cached);
+      return;
+    }
+
+    let cancelled = false;
+    setLogsLoading(true);
+    api.getElementLogs(datasetId, elementId)
+      .then(res => {
+        const logs = res?.raw_logs || [];
+        rawLogsCache.current.set(elementId, logs);
+        if (!cancelled) setSelectedLogs(logs);
+      })
+      .catch(err => {
+        console.error(err);
+        if (!cancelled) setSelectedLogs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLogsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [datasetId, selectedNode, activeTab]);
 
   const centeredOn = layoutMode === 'centered' ? selectedNode : null;
 
@@ -271,28 +383,62 @@ export default function GraphView({ datasetId }) {
   // the prop reference changes, so a fresh object on every render (e.g. when
   // merely selecting a node) caused constant re-layouts.
   const layout = useMemo(
-    () => getLayoutConfig(layoutMode, initialPositions.current, centeredOn),
-    [layoutMode, centeredOn]
+    () => getLayoutConfig(layoutMode, initialPositions.current, centeredOn, elements.length),
+    [layoutMode, centeredOn, elements.length]
   );
 
   const applyLayout = (mode) => {
     // Updating the mode changes the memoised layout prop above, which makes
     // react-cytoscapejs run the new layout. No manual run needed.
     setLayoutMode(mode);
-  }
+  };
 
   const fitGraph = () => {
       if(cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden'), 30);
-  }
-
-  const handleNodeClick = (e) => {
-    const node = e.target;
-    setSelectedNode(node.data());
-    if (!isRightPaneOpen) {
-      setIsRightPaneOpen(true);
-    }
-    setActiveTab('details');
   };
+
+  // react-cytoscapejs invokes this on every mount and update. Listeners are
+  // attached here — right where the instance is created — and guarded by
+  // instance identity. This mirrors the original (working) pattern while
+  // avoiding the duplicate handlers it leaked: repeated calls with the same
+  // instance are ignored, and a recreated instance gets its own handlers.
+  // `cy.destroy()` on unmount removes them, so no manual cleanup is needed.
+  const handleCy = useCallback((cy) => {
+    if (cyRef.current === cy) return;
+    cyRef.current = cy;
+
+    const onElementTap = (event) => {
+      setSelectedLogs([]);
+      setSelectedNode(event.target.data());
+      if (!isRightPaneOpenRef.current) {
+        setIsRightPaneOpen(true);
+      }
+      setActiveTab('details');
+    };
+
+    const onBackgroundTap = (event) => {
+      if (event.target === cy) {
+        setSelectedLogs([]);
+        setSelectedNode(null);
+        setFocusDepth(0);
+      }
+    };
+
+    // Capture the initial force layout once per dataset so we can snap back to
+    // it when the user switches layouts and returns.
+    const onLayoutStop = () => {
+      if (Object.keys(initialPositions.current).length === 0 && layoutModeRef.current === 'force') {
+        cy.nodes().forEach(node => {
+          initialPositions.current[node.id()] = { ...node.position() };
+        });
+      }
+    };
+
+    cy.on('tap', 'node', onElementTap);
+    cy.on('tap', 'edge', onElementTap);
+    cy.on('tap', onBackgroundTap);
+    cy.on('layoutstop', onLayoutStop);
+  }, []);
 
   // Resize cytoscape on pane toggle so canvas redraws to fit new width
   useEffect(() => {
@@ -345,7 +491,7 @@ export default function GraphView({ datasetId }) {
       <div id="cy-container" className="flex-1 min-w-0 relative bg-slate-100 dark:bg-[#222]">
 
         {/* Layout Toolbar */}
-        <div className="absolute top-4 left-4 z-10 flex gap-2">
+        <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2 max-w-[calc(100%-2rem)]">
             <select
                 value={layoutMode}
                 onChange={(e) => applyLayout(e.target.value)}
@@ -355,6 +501,17 @@ export default function GraphView({ datasetId }) {
                 <option value="tree">Layout: Tree</option>
                 <option value="centered">Layout: Centered</option>
             </select>
+            <select
+                value={focusDepth}
+                onChange={(e) => setFocusDepth(Number(e.target.value))}
+                disabled={!selectedNode}
+                title={selectedNode ? 'Limit the graph to the selected node\'s neighbourhood' : 'Select a node to focus'}
+                className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                <option value={0}>Focus: Entire graph</option>
+                <option value={1}>Focus: 1 hop</option>
+                <option value={2}>Focus: 2 hops</option>
+            </select>
             <button
                 onClick={fitGraph}
                 className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
@@ -363,30 +520,26 @@ export default function GraphView({ datasetId }) {
             </button>
         </div>
 
+        {/* Legend */}
+        <div className="absolute bottom-4 left-4 z-10 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-slate-200 dark:border-slate-700 rounded p-2 shadow text-[10px] grid grid-cols-2 gap-x-3 gap-y-1 pointer-events-none">
+          {LEGEND_ITEMS.map(item => (
+            <div key={item.label} className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+              <span
+                className="inline-block w-3 h-3 rounded-sm border"
+                style={{ backgroundColor: item.color, borderColor: item.border }}
+              />
+              <span>{item.label}</span>
+            </div>
+          ))}
+        </div>
+
         <CytoscapeComponent
           elements={elements}
           stylesheet={stylesheet()}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
-          cy={(cy) => {
-            cyRef.current = cy;
-
-            // Try to capture initial layout positions when the physics simulation stops.
-            // We only save it once per dataset so we can snap back to it later.
-            cy.on('layoutstop', () => {
-              if (Object.keys(initialPositions.current).length === 0 && layoutMode === 'force') {
-                cy.nodes().forEach(node => {
-                  initialPositions.current[node.id()] = { ...node.position() };
-                });
-              }
-            });
-
-            cy.on('tap', 'node', handleNodeClick);
-            cy.on('tap', 'edge', handleNodeClick);
-            cy.on('tap', (e) => {
-              if (e.target === cy) setSelectedNode(null);
-            });
-          }}
+          textureOnViewport={true}
+          cy={handleCy}
         />
       </div>
 
@@ -451,7 +604,9 @@ export default function GraphView({ datasetId }) {
                       onClick={() => {
                         if (selectedNode.id) {
                           setManuallyHidden(prev => new Set(prev).add(selectedNode.id));
+                          setSelectedLogs([]);
                           setSelectedNode(null);
+                          setFocusDepth(0);
                         }
                       }}
                       className="shrink-0 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 px-2 py-1 rounded hover:bg-red-200 dark:hover:bg-red-800/50 transition-colors font-semibold"
@@ -459,8 +614,8 @@ export default function GraphView({ datasetId }) {
                     >
                       Hide
                     </button>
-                    {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
-                       <CopyButton textToCopy={JSON.stringify(selectedNode.raw_logs, null, 2)} />
+                    {selectedLogs.length > 0 && (
+                       <CopyButton textToCopy={JSON.stringify(selectedLogs, null, 2)} />
                     )}
                   </div>
                 </div>
@@ -469,10 +624,17 @@ export default function GraphView({ datasetId }) {
                   <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>
                 </div>
 
-                {selectedNode.raw_logs && selectedNode.raw_logs.length > 0 && (
+                {logsLoading ? (
+                  <p className="text-xs text-slate-500 italic">Loading evidence…</p>
+                ) : selectedLogs.length > 0 ? (
                   <div className="mt-4">
                     <h5 className="font-bold text-sm text-slate-600 dark:text-slate-300 mb-2 border-b border-slate-200 dark:border-slate-700 pb-1">Raw Log Events</h5>
-                    {selectedNode.raw_logs.map((log, idx) => {
+                    {selectedNode.raw_logs_total > selectedLogs.length && (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mb-2">
+                        Showing {selectedLogs.length} of {selectedNode.raw_logs_total} events (truncated for performance).
+                      </p>
+                    )}
+                    {selectedLogs.map((log, idx) => {
                       const jsonStr = JSON.stringify(log, null, 2);
                       return (
                         <div key={idx} className="mb-4 relative bg-slate-100 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-600 text-xs font-mono text-slate-800 dark:text-slate-200">
@@ -486,6 +648,8 @@ export default function GraphView({ datasetId }) {
                       );
                     })}
                   </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">No raw log events for this element.</p>
                 )}
               </div>
             ) : activeTab === 'unmapped' ? (

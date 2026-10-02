@@ -500,13 +500,13 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             builder.add_or_update_artifact_node(cmd_node_id,
                                                 wrapped_cmd,
                                                 f"[{evt_type}]\nCommand History:\n{cmd_history}",
-                                                "commandline",
+                                                "commandline-exec",
                                                 event)
             builder.add_edge(
                 actor_ident,
                 cmd_node_id,
                 "History",
-                "#ffcc00",
+                "#c2410c",
                 evt_type,
                 dashed=True,
                 raw_event=event)

@@ -46,13 +46,13 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             builder.add_or_update_artifact_node(cmd_node_id,
                                                 wrapped_cmd,
                                                 f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}",
-                                                "commandline",
+                                                "commandline-exec",
                                                 event)
             builder.add_edge(
                 actor_id,
                 cmd_node_id,
                 "Executes PS",
-                "#ffcc00",
+                "#c2410c",
                 evt_type,
                 dashed=True,
                 raw_event=event)
