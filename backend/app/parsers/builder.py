@@ -40,6 +40,47 @@ def string_hash(val) -> str:
     return hashlib.sha1(str(val).encode("utf-8")).hexdigest()[:16]
 
 
+# Raw events are attached to graph elements so the details pane can show
+# evidence. Hub nodes can appear in thousands of events, so only the first N are
+# retained per element while the true total is still reported for the UI.
+MAX_RAW_LOGS_PER_ELEMENT = 200
+
+# The frontend global search used to JSON-stringify every element's raw events
+# on each keystroke. We build a bounded, lowercased haystack once here instead.
+MAX_SEARCH_TEXT_CHARS = 2000
+
+
+def _append_raw_log(container: dict, raw_event) -> None:
+    """Record ``raw_event`` on a node/edge dict, capping the retained list."""
+    if not raw_event:
+        return
+    container["raw_logs_total"] = container.get("raw_logs_total", 0) + 1
+    logs = container.setdefault("raw_logs", [])
+    if len(logs) < MAX_RAW_LOGS_PER_ELEMENT:
+        logs.append(raw_event)
+
+
+def _build_search_text(data: dict, raw_logs) -> str:
+    """Lowercased haystack used by the frontend's global search.
+
+    Built once on the backend so the browser never has to re-serialise raw
+    events while filtering. Truncated to keep the payload bounded.
+    """
+    parts = [
+        str(data.get("title") or ""),
+        str(data.get("label") or ""),
+        str(data.get("id") or ""),
+        str(data.get("event_simplename") or ""),
+        str(data.get("username") or ""),
+        str(data.get("process_name") or ""),
+        str(data.get("hostname") or ""),
+    ]
+    if raw_logs:
+        parts.append(json.dumps(raw_logs, default=str))
+    text = " ".join(part for part in parts if part).lower()
+    return text[:MAX_SEARCH_TEXT_CHARS]
+
+
 class GraphBuilder:
     def __init__(self):
         self.nodes_dict = {}
@@ -80,8 +121,10 @@ class GraphBuilder:
                 "hostname": hostname,
                 "process_name": name,
                 "actions": actions_list,
-                "raw_logs": [raw_event] if raw_event else []
+                "raw_logs": [],
+                "raw_logs_total": 0,
             }
+            _append_raw_log(self.nodes_dict[pid], raw_event)
         else:
             node = self.nodes_dict[pid]
             current_label = node.get("label", "")
@@ -91,8 +134,7 @@ class GraphBuilder:
             current_name = node.get("process_name")
             actions_list = node.get("actions", [])
 
-            if raw_event:
-                node["raw_logs"].append(raw_event)
+            _append_raw_log(node, raw_event)
 
             if evt_type and evt_type not in actions_list:
                 actions_list.append(evt_type)
@@ -145,12 +187,13 @@ class GraphBuilder:
                 "label": label,
                 "group": group,
                 "title": new_details,
-                "raw_logs": [raw_event] if raw_event else []
+                "raw_logs": [],
+                "raw_logs_total": 0,
             }
+            _append_raw_log(self.nodes_dict[node_id], raw_event)
         else:
             current_title = self.nodes_dict[node_id].get("title", "")
-            if raw_event:
-                self.nodes_dict[node_id].setdefault("raw_logs", []).append(raw_event)
+            _append_raw_log(self.nodes_dict[node_id], raw_event)
 
             if new_details not in current_title:
                 separator = "\n\n" + "="*40 + "\n\n"
@@ -161,7 +204,7 @@ class GraphBuilder:
         source_str = str(source)
         target_str = str(target)
         self._edge_seq += 1
-        self.edges_list.append({
+        edge = {
             "source": source_str,
             "target": target_str,
             "label": label,
@@ -173,16 +216,44 @@ class GraphBuilder:
             # from a content hash caused duplicate ids (Cytoscape silently drops
             # elements that share an id), losing evidence.
             "id": f"edge_{self._edge_seq}",
-            "raw_logs": [raw_event] if raw_event else []
-        })
+            "raw_logs": [],
+            "raw_logs_total": 0,
+        }
+        _append_raw_log(edge, raw_event)
+        self.edges_list.append(edge)
 
     def build_cytoscape_elements(self):
-        cy_nodes = [{"data": n_data} for n_data in self.nodes_dict.values()]
-        cy_edges = [{"data": e_data} for e_data in self.edges_list]
+        """Split the graph into lightweight elements plus server-side side maps.
+
+        ``raw_logs`` and ``search_index`` are pulled out of each element's
+        ``data`` so neither is shipped to or held by the browser:
+
+        * ``raw_logs`` is served on demand by ``/api/graph/{id}/element-logs``.
+        * ``search_index`` backs ``/api/graph/{id}/search`` so the global search
+          can run over raw events without sending them to the client.
+        """
+        raw_logs_map = {}
+        search_index = {}
+        cy_nodes = []
+        for n_data in self.nodes_dict.values():
+            data = {key: value for key, value in n_data.items() if key != "raw_logs"}
+            raw_logs_map[data["id"]] = n_data.get("raw_logs", [])
+            search_index[data["id"]] = _build_search_text(data, n_data.get("raw_logs"))
+            cy_nodes.append({"data": data})
+
+        cy_edges = []
+        for e_data in self.edges_list:
+            data = {key: value for key, value in e_data.items() if key != "raw_logs"}
+            raw_logs_map[data["id"]] = e_data.get("raw_logs", [])
+            search_index[data["id"]] = _build_search_text(data, e_data.get("raw_logs"))
+            cy_edges.append({"data": data})
+
         return {
             "elements": {
                 "nodes": cy_nodes,
                 "edges": cy_edges
             },
+            "raw_logs": raw_logs_map,
+            "search_index": search_index,
             "unmapped_events": self.unmapped_events
         }

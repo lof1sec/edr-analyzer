@@ -57,7 +57,10 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
-- `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor).
+- `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
+  lazy raw-log and search endpoints, cache-backed payloads.
+- `backend/app/routers/graph_cache.py` — bounded process-local LRU of generated
+  graphs; invalidated on dataset delete/upload.
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
 - `backend/main.py` — FastAPI app, CORS allowlist, startup migrations.
 - `backend/alembic/` — migration environment + revisions.
@@ -82,11 +85,20 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 6. **Schema changes go through Alembic.** `main.py` runs `alembic upgrade head`
    on startup; the initial migration is intentionally idempotent.
 7. **All backend API calls go through `frontend/src/api/client.js`.**
+8. **Raw events and the search index stay out of element data.**
+   `build_cytoscape_elements()` returns lightweight `elements` plus `raw_logs`
+   and `search_index` side maps. The browser fetches evidence via
+   `/api/graph/{id}/element-logs?element_id=…` and resolves the global search via
+   `/api/graph/{id}/search?q=…`. Keep it that way: shipping raw logs inside
+   `elements` re-introduces the duplication and per-keystroke JSON serialisation
+   this design removed. Raw logs are capped at `MAX_RAW_LOGS_PER_ELEMENT` while
+   `raw_logs_total` preserves the true count.
 
 ## Testing
 
-- Backend: `backend/tests/` (27 tests). Cover vendor detection, upload parsing,
-  builder ids, and parser smoke tests. Add a test when adding an event mapping.
+- Backend: `backend/tests/` (32 tests). Cover vendor detection, upload parsing,
+  builder ids, raw-log separation/capping, the graph cache, and parser smoke
+  tests. Add a test when adding an event mapping or touching the graph payload.
 - Frontend: `npm run lint` (oxlint) and `npm run build`. There are three
   tolerated warnings: two `set-state-in-effect` (pre-existing) and one
   `react(refs)` for intentionally reading `initialPositions` in a `useMemo`.

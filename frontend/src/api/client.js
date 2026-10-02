@@ -36,6 +36,12 @@ export const api = {
     request(`/api/datasets/${id}`, { method: 'DELETE' }),
 
   getGraph: (id) => request(`/api/graph/${id}`),
+
+  getElementLogs: (id, elementId) =>
+    request(`/api/graph/${id}/element-logs?element_id=${encodeURIComponent(elementId)}`),
+
+  searchGraph: (id, query) =>
+    request(`/api/graph/${id}/search?q=${encodeURIComponent(query)}`),
 };
 
 export { API_URL };

@@ -123,5 +123,26 @@ export const stylesheet = () => [
     style: {
       'display': 'none'
     }
+  },
+  {
+    // Spotlight: everything outside the selected element's neighbourhood.
+    selector: '.dimmed',
+    style: {
+      'opacity': 0.12
+    }
+  },
+  {
+    selector: 'node:selected',
+    style: {
+      'border-width': 4,
+      'border-color': '#ffffff',
+      'overlay-opacity': 0
+    }
+  },
+  {
+    selector: 'edge:selected',
+    style: {
+      'width': 4
+    }
   }
 ];
