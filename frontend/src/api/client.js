@@ -53,6 +53,12 @@ export const api = {
 
   me: () => request('/api/auth/me'),
 
+  changePassword: (currentPassword, newPassword) =>
+    postJson('/api/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
   // Datasets
   listDatasets: () => request('/api/datasets'),
 

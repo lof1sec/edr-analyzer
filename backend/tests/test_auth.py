@@ -77,3 +77,56 @@ def test_protected_routes_require_authentication(client):
 
 def test_authenticated_user_reaches_protected_routes(admin_client):
     assert admin_client.get("/api/datasets/").status_code == 200
+
+
+def test_change_password_requires_authentication(client):
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": ADMIN_PASSWORD, "new_password": "a-new-long-password"},
+    )
+    assert resp.status_code == 401
+
+
+def test_change_password_happy_path(admin_client):
+    new_password = "a-new-long-password"
+    resp = admin_client.post(
+        "/api/auth/change-password",
+        json={"current_password": ADMIN_PASSWORD, "new_password": new_password},
+    )
+    assert resp.status_code == 200
+
+    # The current session stays valid.
+    assert admin_client.get("/api/auth/me").status_code == 200
+
+    admin_client.post("/api/auth/logout")
+    assert (
+        admin_client.post(
+            "/api/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD}
+        ).status_code
+        == 401
+    )
+    assert (
+        admin_client.post(
+            "/api/auth/login", json={"username": "admin", "password": new_password}
+        ).status_code
+        == 200
+    )
+
+
+def test_change_password_rejects_wrong_current_password(admin_client):
+    resp = admin_client.post(
+        "/api/auth/change-password",
+        json={
+            "current_password": "definitely-wrong",
+            "new_password": "a-new-long-password",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_change_password_rejects_weak_new_password(admin_client):
+    resp = admin_client.post(
+        "/api/auth/change-password",
+        json={"current_password": ADMIN_PASSWORD, "new_password": "short"},
+    )
+    assert resp.status_code == 422

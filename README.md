@@ -161,6 +161,7 @@ uvicorn main:app --reload
 | `POST` | `/api/auth/login` | Authenticate and start a session |
 | `POST` | `/api/auth/logout` | End the session |
 | `GET` | `/api/auth/me` | Current user (`401` when unauthenticated) |
+| `POST` | `/api/auth/change-password` | Change the signed-in user's password (requires the current one) |
 | `POST` | `/api/datasets/upload` | Upload and parse a CSV/JSON/JSONL file. `413` if too large, `400` on invalid input |
 | `GET` | `/api/datasets/` | List datasets with their log counts |
 | `DELETE` | `/api/datasets/{dataset_id}` | Delete a dataset and all of its events |

@@ -145,6 +145,12 @@ background. Serves both the first-run "create admin" form and the login form.
 Inputs and the primary button reuse the shared styles (see Inputs / Buttons).
 Errors are inline (`text-xs text-red-600 dark:text-red-400`), never `alert()`.
 
+### Change-password modal (`frontend/src/components/ChangePasswordModal.jsx`)
+
+Overlay (`fixed inset-0`, `bg-black/50`) with a centered `max-w-sm` card. Three
+password fields plus Cancel/Save; success swaps in an inline confirmation. Closes
+on backdrop click, the `X`, or Cancel. Opened from the sidebar's key button.
+
 ### Sidebar (`frontend/src/components/Sidebar.jsx`)
 
 - Width: collapsed `w-16`, expanded `w-80`; `border-r`, `bg-white dark:bg-slate-800`.
