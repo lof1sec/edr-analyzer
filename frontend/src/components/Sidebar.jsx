@@ -29,7 +29,14 @@ export default function Sidebar({
       if (response.ok) {
         await fetchDatasets();
       } else {
-        alert('Upload failed.');
+        let detail = 'Upload failed.';
+        try {
+          const body = await response.json();
+          if (body?.detail) detail = body.detail;
+        } catch {
+          // Response was not JSON; keep the generic message.
+        }
+        alert(detail);
       }
     } catch (error) {
       console.error(error);

@@ -34,10 +34,11 @@ Copy the example environment file and adjust the values:
 cp .env.example .env
 ```
 
-`.env` holds your database credentials and the allowed CORS origins. It is
-git-ignored and must never be committed. At minimum set a strong
-`POSTGRES_PASSWORD`; `CORS_ORIGINS` must list the exact browser origins allowed
-to call the API (never `*`).
+`.env` holds your database credentials, the allowed CORS origins and the
+maximum upload size. It is git-ignored and must never be committed. At minimum
+set a strong `POSTGRES_PASSWORD`; `CORS_ORIGINS` must list the exact browser
+origins allowed to call the API (never `*`). `MAX_UPLOAD_SIZE_MB` caps the size
+of uploaded log files (default `200`); larger uploads are rejected with HTTP 413.
 
 ### Running the Application
 
