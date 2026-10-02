@@ -12,9 +12,14 @@ from app.database import get_db
 from app.models import Dataset, LogEvent
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
+from app.routers.auth import require_user
 from app.schemas import DatasetResponse
 
-router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
+router = APIRouter(
+    prefix="/api/datasets",
+    tags=["Datasets"],
+    dependencies=[Depends(require_user)],
+)
 
 # --- Upload limits / tuning -------------------------------------------------
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "200"))

@@ -5,3 +5,5 @@ alembic
 psycopg[binary]
 python-multipart
 pydantic
+pwdlib[argon2]
+itsdangerous

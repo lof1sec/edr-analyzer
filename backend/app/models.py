@@ -26,3 +26,11 @@ class LogEvent(Base):
     data = Column(JSON().with_variant(JSONB, "postgresql"))
 
     dataset = relationship("Dataset", back_populates="logs")
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

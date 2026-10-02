@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Upload, X, Database, Menu } from 'lucide-react';
+import { Upload, X, Database, Menu, LogOut, KeyRound } from 'lucide-react';
 import { api } from '../api/client';
+import ChangePasswordModal from './ChangePasswordModal';
 
 export default function Sidebar({
   datasets,
@@ -10,9 +11,12 @@ export default function Sidebar({
   isUploading,
   setIsUploading,
   isOpen,
-  setIsOpen
+  setIsOpen,
+  username,
+  onLogout
 }) {
   const [uploadError, setUploadError] = useState(null);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -48,15 +52,34 @@ export default function Sidebar({
 
   if (!isOpen) {
     return (
-      <div className="w-16 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
-        <button
-          onClick={() => setIsOpen(true)}
-          className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
-          title="Open Sidebar"
-        >
-          <Menu size={24} />
-        </button>
-      </div>
+      <>
+        <div className="w-16 h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col items-center py-4 transition-all duration-300 z-20 shrink-0">
+          <button
+            onClick={() => setIsOpen(true)}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Open Sidebar"
+          >
+            <Menu size={24} />
+          </button>
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className="mt-auto p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Change password"
+          >
+            <KeyRound size={20} />
+          </button>
+          <button
+            onClick={onLogout}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Sign out"
+          >
+            <LogOut size={20} />
+          </button>
+        </div>
+        {showChangePassword && (
+          <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+        )}
+      </>
     );
   }
 
@@ -123,6 +146,32 @@ export default function Sidebar({
           )}
         </div>
       </div>
+
+      <div className="p-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+        <span className="text-xs text-slate-500 dark:text-slate-400 truncate" title={username}>
+          {username}
+        </span>
+        <div className="flex items-center shrink-0">
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Change password"
+          >
+            <KeyRound size={18} />
+          </button>
+          <button
+            onClick={onLogout}
+            className="p-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-500 dark:text-slate-400"
+            title="Sign out"
+          >
+            <LogOut size={18} />
+          </button>
+        </div>
+      </div>
+
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
     </div>
   );
 }

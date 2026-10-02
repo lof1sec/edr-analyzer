@@ -8,6 +8,8 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
 
 ## Features
 
+- **Authentication:** a single admin account created on first run; login uses an
+  httpOnly session cookie. Upload and graph endpoints require a session.
 - **Flexible ingestion:** Upload `.csv`, `.json` or `.jsonl` files. Parsing is
   streamed (no full-file buffering) and the upload size is capped with a
   configurable limit.
@@ -42,14 +44,17 @@ products. Events that match neither marker are still stored (event type
 
 ## How It Works
 
-1. **Ingest** — `POST /api/datasets/upload` streams the upload in 1 MiB chunks,
+1. **Authenticate** — on first run `POST /api/auth/setup` creates the admin;
+   afterwards `POST /api/auth/login` starts a signed, httpOnly session cookie
+   that every data endpoint requires.
+2. **Ingest** — `POST /api/datasets/upload` streams the upload in 1 MiB chunks,
    enforces `MAX_UPLOAD_SIZE_MB` (rejects with HTTP 413), detects UTF-8/latin-1,
    parses CSV/JSONL/JSON-array/single-object input, extracts the event type per
    vendor, and inserts `LogEvent` rows in batches.
-2. **Build graph** — `GET /api/graph/{id}` loads the dataset's events in a
+3. **Build graph** — `GET /api/graph/{id}` loads the dataset's events in a
    deterministic order and feeds them to `GraphBuilder` plus the per-vendor
    parsers, producing Cytoscape `{ nodes, edges, unmapped_events }`.
-3. **Visualise** — the React frontend renders the graph and applies all
+4. **Visualise** — the React frontend renders the graph and applies all
    filtering client-side.
 
 ## Tech Stack
@@ -113,6 +118,8 @@ All settings are read from the environment (via `.env` in Docker Compose).
 | `MAX_UPLOAD_SIZE_MB` | backend | `200` | Maximum accepted upload size; larger files get HTTP 413 |
 | `GRAPH_CACHE_SIZE` | backend | `4` | Generated-graph cache entries kept in memory |
 | `GRAPH_CACHE_TTL_SECONDS` | backend | `300` | Cached graph lifetime in seconds (`0` disables expiry) |
+| `SECRET_KEY` | backend | *(ephemeral)* | Secret used to sign session cookies. Set a strong random value for anything beyond local dev |
+| `SESSION_COOKIE_SECURE` | backend | `false` | Set to `true` to restrict the session cookie to HTTPS |
 | `VITE_API_URL` | frontend | `http://localhost:8000` | Base URL of the backend API |
 | `DATABASE_URL` | backend | built from `POSTGRES_*` | Full SQLAlchemy URL. Only needed when running the backend outside Compose |
 
@@ -129,15 +136,18 @@ uvicorn main:app --reload
 
 ## 📖 Usage
 
-1. **Upload logs:** use the sidebar to upload a `.csv`, `.json` or `.jsonl`
+1. **Sign in:** on first run the app asks you to create the administrator
+   account; afterwards you log in. The session is an httpOnly cookie — use the
+   sign-out button at the bottom of the sidebar to end it.
+2. **Upload logs:** use the sidebar to upload a `.csv`, `.json` or `.jsonl`
    export. The backend reports the number of parsed events or the reason for a
    rejection (e.g. file too large).
-2. **Analyse:** click a dataset to load its graph. Use the right-hand panel to:
+3. **Analyse:** click a dataset to load its graph. Use the right-hand panel to:
    - search globally (comma-separated terms are OR-ed),
    - toggle event types, users and PIDs,
    - inspect a selected node/edge and its raw logs,
    - review unmapped event types.
-3. **Explore:** switch between Force-directed, Tree and Centered layouts, fit the
+4. **Explore:** switch between Force-directed, Tree and Centered layouts, fit the
    graph, and hide elements you don't need (`Unhide All` restores them).
 
 ---
@@ -146,6 +156,12 @@ uvicorn main:app --reload
 
 | Method | Path | Description |
 | --- | --- | --- |
+| `GET` | `/api/auth/status` | Whether first-run setup is needed and if a session is active |
+| `POST` | `/api/auth/setup` | Create the first admin account and start a session (only while no user exists) |
+| `POST` | `/api/auth/login` | Authenticate and start a session |
+| `POST` | `/api/auth/logout` | End the session |
+| `GET` | `/api/auth/me` | Current user (`401` when unauthenticated) |
+| `POST` | `/api/auth/change-password` | Change the signed-in user's password (requires the current one) |
 | `POST` | `/api/datasets/upload` | Upload and parse a CSV/JSON/JSONL file. `413` if too large, `400` on invalid input |
 | `GET` | `/api/datasets/` | List datasets with their log counts |
 | `DELETE` | `/api/datasets/{dataset_id}` | Delete a dataset and all of its events |
@@ -153,6 +169,9 @@ uvicorn main:app --reload
 | `GET` | `/api/graph/{dataset_id}/element-logs?element_id=…` | Raw log events for one node/edge (lazily loaded evidence) |
 | `GET` | `/api/graph/{dataset_id}/search?q=…` | Ids of elements matching the search terms (server-side search) |
 | `GET` | `/` | Liveness/status check |
+
+All `/api/datasets` and `/api/graph` endpoints require an authenticated session
+(`401` otherwise); `/` and `/api/auth/*` are public.
 
 Interactive API docs are available at **http://localhost:8000/docs**.
 
@@ -217,10 +236,12 @@ edr-analyzer/
 │   │   │   ├── falcon.py     # CrowdStrike Falcon event mapping
 │   │   │   └── vendor.py     # event type / vendor detection
 │   │   ├── routers/
+│   │   │   ├── auth.py       # login / logout / first-run setup + auth guard
 │   │   │   ├── datasets.py   # upload / list / delete
 │   │   │   └── graph.py      # graph generation
 │   │   ├── database.py       # engine/session (DATABASE_URL)
-│   │   ├── models.py         # Dataset, LogEvent
+│   │   ├── models.py         # Dataset, LogEvent, User
+│   │   ├── security.py       # password hashing (Argon2id)
 │   │   └── schemas.py        # Pydantic schemas
 │   ├── alembic/              # migration environment + revisions
 │   ├── tests/                # pytest suite
@@ -231,7 +252,7 @@ edr-analyzer/
 ├── frontend/
 │   ├── src/
 │   │   ├── api/client.js     # single place for API calls
-│   │   ├── components/       # GraphView, Sidebar, Cytoscape styles
+│   │   ├── components/       # GraphView, Sidebar, AuthPage, Cytoscape styles
 │   │   ├── hooks/            # useDebouncedValue
 │   │   ├── App.jsx
 │   │   └── main.jsx
@@ -250,5 +271,7 @@ edr-analyzer/
 - Database credentials live in `.env` (git-ignored); no secrets are hardcoded.
 - CORS is restricted to an explicit allowlist (`CORS_ORIGINS`).
 - Uploads are size-limited and streamed to avoid unbounded memory use.
-- There is **no authentication** yet: do not expose the API publicly without
-  adding an auth layer in front of it.
+- Authentication is a single admin account created on first run, using an
+  httpOnly, signed session cookie (`SECRET_KEY`). Dataset and graph endpoints
+  reject unauthenticated requests with `401`.
+- Passwords are hashed with Argon2id; plaintext passwords are never stored.

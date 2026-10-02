@@ -10,8 +10,13 @@ from app.parsers.defender import parse_defender_event
 from app.parsers.falcon import parse_falcon_event
 from app.parsers.vendor import DEFENDER, FALCON, get_vendor
 from app.routers import graph_cache
+from app.routers.auth import require_user
 
-router = APIRouter(prefix="/api/graph", tags=["Graph"])
+router = APIRouter(
+    prefix="/api/graph",
+    tags=["Graph"],
+    dependencies=[Depends(require_user)],
+)
 
 
 def _build_graph_payload(dataset_id: int, db: Session) -> dict:
