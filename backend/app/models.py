@@ -1,8 +1,11 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
-from datetime import datetime
+
 from app.database import Base
+
 
 class Dataset(Base):
     __tablename__ = "datasets"
@@ -19,6 +22,7 @@ class LogEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     event_type = Column(String, index=True) # e.g. ProcessCreated, etc
-    data = Column(JSONB)
+    # JSONB on PostgreSQL (production); plain JSON elsewhere (e.g. sqlite tests).
+    data = Column(JSON().with_variant(JSONB, "postgresql"))
 
     dataset = relationship("Dataset", back_populates="logs")

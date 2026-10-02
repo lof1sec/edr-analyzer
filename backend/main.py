@@ -1,12 +1,14 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.routers import datasets, graph
-from contextlib import asynccontextmanager
 import asyncio
 import os
-from alembic import command
+from contextlib import asynccontextmanager
+
 from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
+
+from alembic import command
+from app.routers import datasets, graph
 
 ALEMBIC_INI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
 

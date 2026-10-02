@@ -60,6 +60,8 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 | `MAX_UPLOAD_SIZE_MB` | Upload cap (default `200`; over → HTTP 413) |
 | `VITE_API_URL` | Backend base URL used by the frontend |
 | `DATABASE_URL` | Full SQLAlchemy URL (only needed outside Compose) |
+| `GRAPH_CACHE_SIZE` | Generated-graph cache entries (default `4`) |
+| `GRAPH_CACHE_TTL_SECONDS` | Cached graph lifetime, seconds (default `300`; `0` disables) |
 
 ## Architecture & key files
 
@@ -71,8 +73,9 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
   lazy raw-log and search endpoints, cache-backed payloads.
-- `backend/app/routers/graph_cache.py` — bounded process-local LRU of generated
-  graphs; invalidated on dataset delete/upload.
+- `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
+  generated graphs; invalidated on dataset delete/upload.
+- `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
 - `backend/main.py` — FastAPI app, CORS allowlist, startup migrations.
 - `backend/alembic/` — migration environment + revisions.
@@ -104,19 +107,28 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    `/api/graph/{id}/search?q=…`. Keep it that way: shipping raw logs inside
    `elements` re-introduces the duplication and per-keystroke JSON serialisation
    this design removed. Raw logs are capped at `MAX_RAW_LOGS_PER_ELEMENT` while
-   `raw_logs_total` preserves the true count.
+   `raw_logs_total` preserves the true count. `search_index` is built from
+   `_search_text`, which every event contributes to (bounded by
+   `MAX_SEARCH_TEXT_CHARS`), so search is not limited by the raw-log cap.
+   `unmapped_events` is returned as `{event_type: count}`, not a flat list.
 
 ## Testing
 
-- Backend: `backend/tests/` (34 tests). Cover vendor detection, upload parsing,
-  builder ids, raw-log separation/capping, the graph cache, and parser smoke
-  tests (incl. the styled command-execution events). Add a test when adding an
-  event mapping or touching the graph payload.
+- Backend: `backend/tests/` (46 tests): pure parser/builder tests plus
+  `test_api.py`, which exercises the HTTP endpoints against an in-memory sqlite
+  DB. `TestClient` is used *without* its context manager so the PostgreSQL
+  startup migrations are skipped; `models.py` uses
+  `JSON().with_variant(JSONB, "postgresql")` so the schema also builds on sqlite.
+  Add a test when adding an event mapping, endpoint, or touching the payload.
+- Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
+  Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
+  in defaults are intentionally exempt via `B008`.
 - Frontend: `npm run lint` (oxlint) and `npm run build`. There are three
   tolerated warnings: two `set-state-in-effect` (pre-existing) and one
   `react(refs)` for intentionally reading `initialPositions` in a `useMemo`.
   Do not fail the build over these.
-- CI (`.github/workflows/ci.yml`) runs on push/PR to `main` and `v2`.
+- CI (`.github/workflows/ci.yml`) runs on push/PR to `main` and `v2`
+  (backend: ruff + pytest; frontend: lint + build).
 
 ## Commit style
 
@@ -136,4 +148,5 @@ Conventional-commit prefixes have been used so far (`security:`, `perf:`,
   back to `async def` while doing blocking DB work.
 - `backend/app/database.py` raises at import if `DATABASE_URL` is missing; tests
   set `DATABASE_URL=sqlite://` in `tests/conftest.py`.
-- No Python linter/formatter is configured yet (Ruff would be welcome).
+- Ruff is configured for **linting only** (`ruff check`), not formatting. There
+  is no auto-formatter, so match the surrounding style by hand.

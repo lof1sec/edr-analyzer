@@ -1,3 +1,5 @@
+import time
+
 from app.routers import graph_cache
 
 
@@ -23,6 +25,13 @@ def test_cache_is_bounded(monkeypatch):
     assert graph_cache.get(1) is None
     assert graph_cache.get(2) == {"a": 2}
     assert graph_cache.get(3) == {"a": 3}
+
+
+def test_expired_entries_are_dropped(monkeypatch):
+    monkeypatch.setattr(graph_cache, "_TTL_SECONDS", 0.01)
+    graph_cache.put(1, {"a": 1})
+    time.sleep(0.02)
+    assert graph_cache.get(1) is None
 
 
 def test_get_marks_entry_as_recently_used(monkeypatch):

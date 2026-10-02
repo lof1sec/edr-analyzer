@@ -111,6 +111,8 @@ All settings are read from the environment (via `.env` in Docker Compose).
 | `POSTGRES_DB` | db / backend | *(required)* | PostgreSQL database name |
 | `CORS_ORIGINS` | backend | `http://localhost:5173` | Comma-separated allowlist of browser origins. Never use `*` |
 | `MAX_UPLOAD_SIZE_MB` | backend | `200` | Maximum accepted upload size; larger files get HTTP 413 |
+| `GRAPH_CACHE_SIZE` | backend | `4` | Generated-graph cache entries kept in memory |
+| `GRAPH_CACHE_TTL_SECONDS` | backend | `300` | Cached graph lifetime in seconds (`0` disables expiry) |
 | `VITE_API_URL` | frontend | `http://localhost:8000` | Base URL of the backend API |
 | `DATABASE_URL` | backend | built from `POSTGRES_*` | Full SQLAlchemy URL. Only needed when running the backend outside Compose |
 
@@ -147,7 +149,9 @@ uvicorn main:app --reload
 | `POST` | `/api/datasets/upload` | Upload and parse a CSV/JSON/JSONL file. `413` if too large, `400` on invalid input |
 | `GET` | `/api/datasets/` | List datasets with their log counts |
 | `DELETE` | `/api/datasets/{dataset_id}` | Delete a dataset and all of its events |
-| `GET` | `/api/graph/{dataset_id}` | Cytoscape elements and unmapped-event stats for a dataset |
+| `GET` | `/api/graph/{dataset_id}` | Cytoscape elements and aggregated unmapped-event counts for a dataset |
+| `GET` | `/api/graph/{dataset_id}/element-logs?element_id=…` | Raw log events for one node/edge (lazily loaded evidence) |
+| `GET` | `/api/graph/{dataset_id}/search?q=…` | Ids of elements matching the search terms (server-side search) |
 | `GET` | `/` | Liveness/status check |
 
 Interactive API docs are available at **http://localhost:8000/docs**.
