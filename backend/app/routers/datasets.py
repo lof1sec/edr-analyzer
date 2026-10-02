@@ -3,14 +3,16 @@ import csv
 import io
 import json
 import os
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+
 from app.database import get_db
 from app.models import Dataset, LogEvent
-from app.schemas import DatasetResponse
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
+from app.schemas import DatasetResponse
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
@@ -94,28 +96,97 @@ def _looks_like_json_array(file_obj, encoding) -> bool:
     return text.lstrip().startswith("[")
 
 
+def _iter_json_array(file_obj, encoding):
+    """Yield the values of a top-level JSON array incrementally.
+
+    A large ``.json`` array must not be read into memory in one go (the upload
+    cap defaults to 200 MB), so this walks the stream in ``CHUNK_SIZE`` chunks
+    and uses ``JSONDecoder.raw_decode`` to pull out one value at a time.
+
+    Raises ``json.JSONDecodeError`` on a malformed/truncated array so the caller
+    can turn it into an HTTP 400.
+    """
+    stream = io.TextIOWrapper(file_obj, encoding=encoding, newline="")
+    decoder = json.JSONDecoder()
+    buffer = ""
+    eof = False
+
+    def fill():
+        nonlocal buffer, eof
+        if eof:
+            return
+        chunk = stream.read(CHUNK_SIZE)
+        if chunk:
+            buffer += chunk.replace("\x00", "")
+        else:
+            eof = True
+
+    try:
+        # Find the opening bracket, skipping leading whitespace.
+        while True:
+            buffer = buffer.lstrip()
+            if buffer:
+                break
+            fill()
+            if eof and not buffer:
+                return
+        if buffer[0] != "[":
+            return
+        buffer = buffer[1:]
+
+        while True:
+            buffer = buffer.lstrip()
+            if not buffer:
+                if eof:
+                    raise json.JSONDecodeError("Unterminated JSON array", buffer, 0)
+                fill()
+                continue
+            if buffer[0] == "]":
+                return
+            if buffer[0] == ",":
+                buffer = buffer[1:]
+                continue
+            try:
+                value, end = decoder.raw_decode(buffer)
+            except json.JSONDecodeError as exc:
+                if eof:
+                    raise exc
+                fill()
+                continue
+            buffer = buffer[end:]
+            yield value
+    finally:
+        stream.detach()
+
+
+def _parse_json_array(file_obj, encoding):
+    """Yield ``(event_type, row)`` tuples from a streamed JSON array."""
+    try:
+        for row in _iter_json_array(file_obj, encoding):
+            if isinstance(row, dict):
+                yield extract_event_type(row), row
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Failed to parse JSON file") from None
+
+
 def _parse_json_document(file_obj, encoding):
-    """Parse the whole upload as a single JSON document (array or object)."""
+    """Parse the whole upload as a single JSON document (a lone object)."""
     file_obj.seek(0)
     raw = file_obj.read().decode(encoding, errors="replace").replace("\x00", "")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Failed to parse JSON file")
+        raise HTTPException(status_code=400, detail="Failed to parse JSON file") from None
 
-    # Accept either a top-level array or a single event object.
+    # Accept a single event object (arrays never reach this fallback).
     if isinstance(data, dict):
-        data = [data]
-    if isinstance(data, list):
-        for row in data:
-            if isinstance(row, dict):
-                yield extract_event_type(row), row
+        yield extract_event_type(data), data
 
 
 def _parse_json_rows(file_obj, encoding):
     """Yield ``(event_type, row)`` tuples for Falcon JSONL or a JSON array."""
     if _looks_like_json_array(file_obj, encoding):
-        yield from _parse_json_document(file_obj, encoding)
+        yield from _parse_json_array(file_obj, encoding)
         return
 
     parsed_any = False

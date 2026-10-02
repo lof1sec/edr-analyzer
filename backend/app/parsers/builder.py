@@ -1,6 +1,7 @@
-import json
-import hashlib
 import functools
+import hashlib
+import json
+
 
 def get_additional_fields_dict(event_data):
     fields = event_data.get("AdditionalFields")
@@ -45,13 +46,20 @@ def string_hash(val) -> str:
 # retained per element while the true total is still reported for the UI.
 MAX_RAW_LOGS_PER_ELEMENT = 200
 
-# The frontend global search used to JSON-stringify every element's raw events
-# on each keystroke. We build a bounded, lowercased haystack once here instead.
-MAX_SEARCH_TEXT_CHARS = 2000
+# Search haystack per element. It is kept server-side only (never shipped to the
+# browser) and built from *every* event, so the global search is not limited by
+# the retained raw-log cap above. The cap is a safety valve for pathological hub
+# elements, not a functional limit for realistic ones.
+MAX_SEARCH_TEXT_CHARS = 100_000
 
 
 def _append_raw_log(container: dict, raw_event) -> None:
-    """Record ``raw_event`` on a node/edge dict, capping the retained list."""
+    """Record ``raw_event`` as evidence and add it to the search haystack.
+
+    The retained raw logs are capped at ``MAX_RAW_LOGS_PER_ELEMENT``, but every
+    event also contributes to ``_search_text`` (bounded) so searching is not
+    silently limited to the retained events.
+    """
     if not raw_event:
         return
     container["raw_logs_total"] = container.get("raw_logs_total", 0) + 1
@@ -59,12 +67,21 @@ def _append_raw_log(container: dict, raw_event) -> None:
     if len(logs) < MAX_RAW_LOGS_PER_ELEMENT:
         logs.append(raw_event)
 
+    existing = container.get("_search_text", "")
+    if len(existing) < MAX_SEARCH_TEXT_CHARS:
+        try:
+            extra = json.dumps(raw_event, default=str)
+        except (TypeError, ValueError):
+            extra = str(raw_event)
+        container["_search_text"] = (existing + " " + extra)[:MAX_SEARCH_TEXT_CHARS]
 
-def _build_search_text(data: dict, raw_logs) -> str:
-    """Lowercased haystack used by the frontend's global search.
+
+def _build_search_text(data: dict, search_text: str = "") -> str:
+    """Lowercased haystack used by the backend search endpoint.
 
     Built once on the backend so the browser never has to re-serialise raw
-    events while filtering. Truncated to keep the payload bounded.
+    events while filtering. ``search_text`` already contains every raw event
+    (bounded by ``MAX_SEARCH_TEXT_CHARS``).
     """
     parts = [
         str(data.get("title") or ""),
@@ -75,8 +92,8 @@ def _build_search_text(data: dict, raw_logs) -> str:
         str(data.get("process_name") or ""),
         str(data.get("hostname") or ""),
     ]
-    if raw_logs:
-        parts.append(json.dumps(raw_logs, default=str))
+    if search_text:
+        parts.append(search_text)
     text = " ".join(part for part in parts if part).lower()
     return text[:MAX_SEARCH_TEXT_CHARS]
 
@@ -89,7 +106,8 @@ class GraphBuilder:
         self._edge_seq = 0
 
     def get_or_create_process_node(self, pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
-        if not pid: return
+        if not pid:
+            return
         pid = str(pid)
 
         display_name = name if name else "Unknown"
@@ -178,7 +196,8 @@ class GraphBuilder:
                         node["title"] += f"\nHost: 🖥️ {hostname}"
 
     def add_or_update_artifact_node(self, node_id, label, new_details, group, raw_event=None):
-        if not node_id: return
+        if not node_id:
+            return
         node_id = str(node_id)
 
         if node_id not in self.nodes_dict:
@@ -232,20 +251,21 @@ class GraphBuilder:
         * ``search_index`` backs ``/api/graph/{id}/search`` so the global search
           can run over raw events without sending them to the client.
         """
+        internal_keys = ("raw_logs", "_search_text")
         raw_logs_map = {}
         search_index = {}
         cy_nodes = []
         for n_data in self.nodes_dict.values():
-            data = {key: value for key, value in n_data.items() if key != "raw_logs"}
+            data = {key: value for key, value in n_data.items() if key not in internal_keys}
             raw_logs_map[data["id"]] = n_data.get("raw_logs", [])
-            search_index[data["id"]] = _build_search_text(data, n_data.get("raw_logs"))
+            search_index[data["id"]] = _build_search_text(data, n_data.get("_search_text", ""))
             cy_nodes.append({"data": data})
 
         cy_edges = []
         for e_data in self.edges_list:
-            data = {key: value for key, value in e_data.items() if key != "raw_logs"}
+            data = {key: value for key, value in e_data.items() if key not in internal_keys}
             raw_logs_map[data["id"]] = e_data.get("raw_logs", [])
-            search_index[data["id"]] = _build_search_text(data, e_data.get("raw_logs"))
+            search_index[data["id"]] = _build_search_text(data, e_data.get("_search_text", ""))
             cy_edges.append({"data": data})
 
         return {

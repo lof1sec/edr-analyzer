@@ -1,6 +1,7 @@
 import json
 import textwrap
-from app.parsers.builder import GraphBuilder, hash_str, string_hash, get_additional_fields_dict
+
+from app.parsers.builder import GraphBuilder, get_additional_fields_dict, hash_str
 
 
 def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
@@ -407,7 +408,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
                     method = add_fields.get("method", "UNKNOWN")
                     status = add_fields.get("status_code", "N/A")
                     full_net_info += f"\nHTTP Method: {method}\nStatus: {status}"
-                    if add_fields.get("direction"): full_net_info += f"\nDirection: {add_fields.get('direction')}"
+                    if add_fields.get("direction"):
+                        full_net_info += f"\nDirection: {add_fields.get('direction')}"
 
                 elif evt_type == "ConnectionAcknowledged" and add_fields:
                     if "Tcp Flags" in add_fields:

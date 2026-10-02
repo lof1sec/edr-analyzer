@@ -1,11 +1,14 @@
+from collections import Counter
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.models import LogEvent, Dataset
+from app.models import Dataset, LogEvent
 from app.parsers.builder import GraphBuilder
-from app.parsers.falcon import parse_falcon_event
 from app.parsers.defender import parse_defender_event
-from app.parsers.vendor import is_falcon_event
+from app.parsers.falcon import parse_falcon_event
+from app.parsers.vendor import DEFENDER, FALCON, get_vendor
 from app.routers import graph_cache
 
 router = APIRouter(prefix="/api/graph", tags=["Graph"])
@@ -36,9 +39,9 @@ def _build_graph_payload(dataset_id: int, db: Session) -> dict:
         evt_type = log.event_type
 
         # Vendor is detected per event, so a dataset can safely mix exports.
-        is_falcon = is_falcon_event(event)
+        vendor = get_vendor(event)
 
-        if is_falcon:
+        if vendor == FALCON:
             actor_id = event.get("ContextProcessId") or event.get("SourceProcessId") or event.get("ParentProcessId")
             actor_name = event.get("ContextBaseFileName") or event.get("ParentBaseFileName")
             target_id = event.get("TargetProcessId")
@@ -49,7 +52,7 @@ def _build_graph_payload(dataset_id: int, db: Session) -> dict:
                actor_id = target_id
 
             parse_falcon_event(builder, event, evt_type, actor_id, actor_name, target_id, target_name, username, hostname)
-        else:
+        elif vendor == DEFENDER:
             actor_id = event.get("InitiatingProcessId")
             actor_name = event.get("InitiatingProcessFileName")
             target_id = event.get("ProcessId")
@@ -60,6 +63,10 @@ def _build_graph_payload(dataset_id: int, db: Session) -> dict:
             hostname = event.get("DeviceName", "")
 
             parse_defender_event(builder, event, evt_type, actor_id, actor_name, target_id, target_name, username, hostname)
+        else:
+            # Neither vendor marker is present. Report it as unmapped instead of
+            # force-feeding it to the Defender parser.
+            builder.unmapped_events.append(evt_type)
 
     return builder.build_cytoscape_elements()
 
@@ -79,10 +86,12 @@ def _get_graph_payload(dataset_id: int, db: Session) -> dict:
 def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
     payload = _get_graph_payload(dataset_id, db)
     # Raw logs are intentionally omitted here so the initial response and the
-    # in-browser graph stay small; they are fetched on demand below.
+    # in-browser graph stay small; they are fetched on demand below. Unmapped
+    # events are aggregated to counts so the payload does not carry one entry
+    # per event.
     return {
         "elements": payload["elements"],
-        "unmapped_events": payload["unmapped_events"],
+        "unmapped_events": dict(Counter(payload["unmapped_events"])),
     }
 
 

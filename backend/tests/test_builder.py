@@ -1,8 +1,8 @@
 import json
 
 from app.parsers.builder import (
-    GraphBuilder,
     MAX_RAW_LOGS_PER_ELEMENT,
+    GraphBuilder,
     string_hash,
 )
 
@@ -68,3 +68,17 @@ def test_raw_logs_are_capped_but_total_is_kept():
     assert len(payload["raw_logs"]["42"]) == MAX_RAW_LOGS_PER_ELEMENT
     assert payload["raw_logs"]["42"][0] == {"i": 0}
     assert node["data"]["raw_logs_total"] == total
+
+
+def test_search_index_covers_events_beyond_the_raw_log_cap():
+    builder = GraphBuilder()
+    total = MAX_RAW_LOGS_PER_ELEMENT + 50
+    for i in range(total):
+        builder.get_or_create_process_node("42", "cmd.exe", raw_event={"marker": f"token{i}"})
+
+    payload = builder.build_cytoscape_elements()
+    last_token = f"token{total - 1}"
+
+    # Searchable even though the retained evidence list dropped it.
+    assert last_token in payload["search_index"]["42"]
+    assert last_token not in json.dumps(payload["raw_logs"]["42"])

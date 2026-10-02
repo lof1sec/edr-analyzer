@@ -18,3 +18,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# AI / agent tooling
+.agents/
+skills-lock.json

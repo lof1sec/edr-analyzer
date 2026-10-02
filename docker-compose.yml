@@ -24,6 +24,8 @@ services:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-200}
+      - GRAPH_CACHE_SIZE=${GRAPH_CACHE_SIZE:-4}
+      - GRAPH_CACHE_TTL_SECONDS=${GRAPH_CACHE_TTL_SECONDS:-300}
       - PYTHONPATH=/app
     depends_on:
       db:

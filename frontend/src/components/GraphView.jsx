@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { Filter, X, Copy, Check } from 'lucide-react';
-import { stylesheet } from './cytoscapeStyles';
+import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
@@ -25,19 +25,6 @@ const CopyButton = ({ textToCopy }) => {
     </button>
   );
 };
-
-// Mirrors the colours in cytoscapeStyles.js so the legend cannot drift.
-const LEGEND_ITEMS = [
-  { label: 'Process', color: '#4d0000', border: '#ff4d4d' },
-  { label: 'File', color: '#00264d', border: '#4da6ff' },
-  { label: 'Module', color: '#4d0099', border: '#b366ff' },
-  { label: 'Registry', color: '#804000', border: '#ff9933' },
-  { label: 'Network', color: '#003333', border: '#00ffff' },
-  { label: 'Command line', color: '#332b00', border: '#ffcc00' },
-  { label: 'PowerShell', color: '#4d2e00', border: '#ff9900' },
-  { label: 'Command exec', color: '#431407', border: '#c2410c' },
-  { label: 'Alert', color: '#b30000', border: '#ff0000' },
-];
 
 // Above this many elements the physics simulation is capped and animations are
 // dropped so the layout stays interactive.
@@ -118,6 +105,8 @@ function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0)
 export default function GraphView({ datasetId }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedLogs, setSelectedLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -177,6 +166,7 @@ export default function GraphView({ datasetId }) {
     setFocusDepth(0);
     setLayoutMode('force');
     setSearchResult({ q: '', ids: null });
+    setError(null);
     const fetchGraph = async () => {
       setLoading(true);
       try {
@@ -207,15 +197,16 @@ export default function GraphView({ datasetId }) {
         ];
 
         setElements(cyElements);
-        setUnmappedEvents(data.unmapped_events || []);
+        setUnmappedEvents(data.unmapped_events || {});
       } catch (err) {
         console.error(err);
+        setError(err?.message || 'Failed to load the graph.');
       } finally {
         setLoading(false);
       }
     };
     fetchGraph();
-  }, [datasetId]);
+  }, [datasetId, reloadKey]);
 
   // The backend resolves the global search against its cached search index, so
   // raw events never reach the browser. Storing the query with the result lets
@@ -387,6 +378,11 @@ export default function GraphView({ datasetId }) {
     [layoutMode, centeredOn, elements.length]
   );
 
+  // The stylesheet is static: memoise it so react-cytoscapejs does not re-apply
+  // the whole style (a fresh array reference triggers style.fromJson().update())
+  // on every render/filter toggle.
+  const styleSheet = useMemo(() => stylesheet(), []);
+
   const applyLayout = (mode) => {
     // Updating the mode changes the memoised layout prop above, which makes
     // react-cytoscapejs run the new layout. No manual run needed.
@@ -475,6 +471,21 @@ export default function GraphView({ datasetId }) {
     );
   }
 
+  if (error) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
+        <p className="text-sm font-semibold text-red-600 dark:text-red-400">Could not load the graph</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md break-words">{error}</p>
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-semibold transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   const toggleEvent = (evt) => setEventTypes(p => ({ ...p, [evt]: !p[evt] }));
   const setAllEvents = (val) => setEventTypes(p => Object.keys(p).reduce((acc, k) => ({ ...acc, [k]: val }), {}));
 
@@ -483,6 +494,9 @@ export default function GraphView({ datasetId }) {
 
   const togglePid = (pid) => setPids(p => ({ ...p, [pid]: !p[pid] }));
   const setAllPids = (val) => setPids(p => Object.keys(p).reduce((acc, k) => ({ ...acc, [k]: val }), {}));
+
+  // Backend sends aggregated counts; show the most frequent first.
+  const unmappedEntries = Object.entries(unmappedEvents).sort((a, b) => b[1] - a[1]);
 
   return (
     <div className="flex-1 flex relative overflow-hidden w-full h-full">
@@ -522,7 +536,7 @@ export default function GraphView({ datasetId }) {
 
         {/* Legend */}
         <div className="absolute bottom-4 left-4 z-10 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-slate-200 dark:border-slate-700 rounded p-2 shadow text-[10px] grid grid-cols-2 gap-x-3 gap-y-1 pointer-events-none">
-          {LEGEND_ITEMS.map(item => (
+          {NODE_GROUPS.map(item => (
             <div key={item.label} className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
               <span
                 className="inline-block w-3 h-3 rounded-sm border"
@@ -535,7 +549,7 @@ export default function GraphView({ datasetId }) {
 
         <CytoscapeComponent
           elements={elements}
-          stylesheet={stylesheet()}
+          stylesheet={styleSheet}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
           textureOnViewport={true}
@@ -657,18 +671,15 @@ export default function GraphView({ datasetId }) {
             /* Unmapped Stats Pane Content */
               <div className="space-y-4">
                 <h4 className="font-bold text-sm text-slate-800 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">
-                  Unmapped Events ({unmappedEvents.length})
+                  Unmapped Events ({unmappedEntries.length})
                 </h4>
-                {unmappedEvents.length === 0 ? (
+                {unmappedEntries.length === 0 ? (
                   <p className="text-xs text-slate-500 italic">All events have been successfully mapped.</p>
                 ) : (
                   <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-2 overflow-y-auto max-h-[60vh] custom-scrollbar">
                     <ul className="list-disc list-inside space-y-1">
-                      {Object.entries(unmappedEvents.reduce((acc, evt) => {
-                        acc[evt] = (acc[evt] || 0) + 1;
-                        return acc;
-                      }, {})).map(([evt, count], idx) => (
-                        <li key={idx} className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate" title={`${evt} (${count})`}>
+                      {unmappedEntries.map(([evt, count]) => (
+                        <li key={evt} className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate" title={`${evt} (${count})`}>
                           {evt} ({count})
                         </li>
                       ))}

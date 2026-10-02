@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Upload, X, Database, Menu } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -12,12 +12,14 @@ export default function Sidebar({
   isOpen,
   setIsOpen
 }) {
+  const [uploadError, setUploadError] = useState(null);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     setIsUploading(true);
+    setUploadError(null);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -25,7 +27,7 @@ export default function Sidebar({
       await api.uploadDataset(formData);
       await fetchDatasets();
     } catch (error) {
-      alert(error.message || 'Upload failed.');
+      setUploadError(error.message || 'Upload failed.');
     } finally {
       setIsUploading(false);
       event.target.value = null;
@@ -87,6 +89,9 @@ export default function Sidebar({
           </div>
           <input type="file" className="hidden" accept=".csv" onChange={handleFileUpload} disabled={isUploading} />
         </label>
+        {uploadError && (
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400 break-words">{uploadError}</p>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">

@@ -56,6 +56,37 @@ def test_invalid_json_raises_400():
     assert excinfo.value.status_code == 400
 
 
+def test_json_array_streams_many_objects():
+    rows = ",".join('{"ActionType":"ProcessCreated"}' for _ in range(5000))
+    assert len(parse(("[" + rows + "]").encode(), "json")) == 5000
+
+
+def test_json_array_with_nested_values_and_whitespace():
+    data = (
+        b"[\n"
+        b'  {"ActionType": "ProcessCreated", "extra": {"a": [1, 2, {"b": 3}]}},\n'
+        b'  {"#event_simpleName": "DnsRequest"}\n'
+        b"]"
+    )
+    assert [etype for etype, _ in parse(data, "json")] == ["ProcessCreated", "DnsRequest"]
+
+
+def test_empty_json_array_is_valid():
+    assert parse(b"[]", "json") == []
+
+
+def test_json_array_latin1():
+    data = '[{"ActionType":"ProcessCreated","Data":"caf\xe9"}]'.encode("latin-1")
+    _, row = parse(data, "json")[0]
+    assert row["Data"] == "caf\u00e9"
+
+
+def test_truncated_json_array_raises_400():
+    with pytest.raises(HTTPException) as excinfo:
+        parse(b'[{"ActionType": "ProcessCreated"}', "json")
+    assert excinfo.value.status_code == 400
+
+
 def test_size_limit_raises_413(monkeypatch):
     monkeypatch.setattr(ds, "MAX_UPLOAD_SIZE_BYTES", 10)
     with pytest.raises(HTTPException) as excinfo:
