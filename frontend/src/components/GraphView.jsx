@@ -396,17 +396,15 @@ export default function GraphView({ datasetId }) {
       if(cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden'), 30);
   };
 
-  // react-cytoscapejs invokes this on every update, so it must stay a stable
-  // reference and only store the instance. Event listeners are attached once in
-  // the effect below (the previous inline version re-registered them on every
-  // render, leaking duplicate handlers).
+  // react-cytoscapejs invokes this on every mount and update. Listeners are
+  // attached here — right where the instance is created — and guarded by
+  // instance identity. This mirrors the original (working) pattern while
+  // avoiding the duplicate handlers it leaked: repeated calls with the same
+  // instance are ignored, and a recreated instance gets its own handlers.
+  // `cy.destroy()` on unmount removes them, so no manual cleanup is needed.
   const handleCy = useCallback((cy) => {
+    if (cyRef.current === cy) return;
     cyRef.current = cy;
-  }, []);
-
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
 
     const onElementTap = (event) => {
       setSelectedLogs([]);
@@ -439,14 +437,7 @@ export default function GraphView({ datasetId }) {
     cy.on('tap', 'edge', onElementTap);
     cy.on('tap', onBackgroundTap);
     cy.on('layoutstop', onLayoutStop);
-
-    return () => {
-      cy.off('tap', 'node', onElementTap);
-      cy.off('tap', 'edge', onElementTap);
-      cy.off('tap', onBackgroundTap);
-      cy.off('layoutstop', onLayoutStop);
-    };
-  }, [elements]);
+  }, []);
 
   // Resize cytoscape on pane toggle so canvas redraws to fit new width
   useEffect(() => {
@@ -547,7 +538,6 @@ export default function GraphView({ datasetId }) {
           layout={layout}
           style={{ width: '100%', height: '100%' }}
           textureOnViewport={true}
-          hideEdgesOnViewport={true}
           cy={handleCy}
         />
       </div>
