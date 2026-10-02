@@ -14,7 +14,12 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    logs = db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id).all()
+    logs = (
+        db.query(LogEvent)
+        .filter(LogEvent.dataset_id == dataset_id)
+        .order_by(LogEvent.id)
+        .all()
+    )
     builder = GraphBuilder()
 
     for log in logs:

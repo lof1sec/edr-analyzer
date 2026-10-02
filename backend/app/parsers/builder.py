@@ -17,12 +17,27 @@ def get_additional_fields_dict(event_data):
                 pass
     return {}
 
-@functools.lru_cache(maxsize=4096)
+@functools.lru_cache(maxsize=8192)
 def hash_str(val: str) -> str:
-    return hashlib.md5(str(val).encode('utf-8')).hexdigest()[:10]
+    """Short, stable digest used to build labels/ids in the graph payload.
 
-def string_hash(val: str) -> int:
-    return abs(hash(val))
+    The digest is truncated only for readability; determinism across processes
+    is what matters here, not cryptographic strength.
+    """
+    return hashlib.md5(str(val).encode("utf-8")).hexdigest()[:10]
+
+
+@functools.lru_cache(maxsize=65536)
+def string_hash(val) -> str:
+    """Stable identifier digest for graph element ids.
+
+    Replaces the built-in ``hash()``, whose string hashing is salted per process
+    (PYTHONHASHSEED). Ids built from it changed on every backend restart,
+    breaking references and making the graph non-reproducible. A sha1 digest is
+    fixed across processes; 16 hex chars keeps collisions negligible for
+    realistic datasets.
+    """
+    return hashlib.sha1(str(val).encode("utf-8")).hexdigest()[:16]
 
 
 class GraphBuilder:
@@ -30,6 +45,7 @@ class GraphBuilder:
         self.nodes_dict = {}
         self.edges_list = []
         self.unmapped_events = []
+        self._edge_seq = 0
 
     def get_or_create_process_node(self, pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
         if not pid: return
@@ -144,6 +160,7 @@ class GraphBuilder:
     def add_edge(self, source, target, label, color, event_simplename, dashed=False, raw_event=None):
         source_str = str(source)
         target_str = str(target)
+        self._edge_seq += 1
         self.edges_list.append({
             "source": source_str,
             "target": target_str,
@@ -151,7 +168,11 @@ class GraphBuilder:
             "color": color,
             "event_simplename": event_simplename,
             "dashed": dashed,
-            "id": f"{source_str}_{target_str}_{hash_str(label)}_{hash_str(event_simplename)}_{hash_str(str(raw_event))}",
+            # A per-builder sequence guarantees a unique id even when several
+            # events produce identical source/target/label/content. Deriving it
+            # from a content hash caused duplicate ids (Cytoscape silently drops
+            # elements that share an id), losing evidence.
+            "id": f"edge_{self._edge_seq}",
             "raw_logs": [raw_event] if raw_event else []
         })
 
