@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import json
+import os
 
 
 def get_additional_fields_dict(event_data):
@@ -51,6 +52,23 @@ MAX_RAW_LOGS_PER_ELEMENT = 200
 # the retained raw-log cap above. The cap is a safety valve for pathological hub
 # elements, not a functional limit for realistic ones.
 MAX_SEARCH_TEXT_CHARS = 100_000
+
+# Fan-out hub: a node with more than this many exclusively-owned descendants has
+# them collapsed into a single cluster placeholder in the initial payload. The
+# hidden elements are served on demand by
+# ``/api/graph/{id}/clusters/{cluster_id}``. Set to 0 (or negative) to disable.
+DEFAULT_CLUSTER_MIN_CHILDREN = 50
+
+
+def _cluster_min_children() -> int:
+    """Read ``CLUSTER_MIN_CHILDREN`` at call time so tests can tune it per case."""
+    raw = os.getenv("CLUSTER_MIN_CHILDREN")
+    if raw is None:
+        return DEFAULT_CLUSTER_MIN_CHILDREN
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_CLUSTER_MIN_CHILDREN
 
 
 def _append_raw_log(container: dict, raw_event) -> None:
@@ -241,6 +259,104 @@ class GraphBuilder:
         _append_raw_log(edge, raw_event)
         self.edges_list.append(edge)
 
+    def _plan_clusters(self):
+        """Collapse a process hub's exclusively-owned *artifact* children.
+
+        Only non-process nodes are ever collapsed. Processes are the graph's
+        central actors: their ``Spawns`` edges are what keep the graph connected,
+        so a hub's process children always stay in the payload. Only the fan-out
+        of artifact leaves (files, registry, network, command lines, modules,
+        alerts, …) is hidden behind a placeholder. Artifacts never have outgoing
+        edges in this model, so removing an exclusive one can never leave a
+        dangling edge.
+
+        Returns ``(collapsed_node_ids, collapsed_edge_ids, clusters)`` where
+        ``clusters`` maps a placeholder id to the elements needed to expand it.
+        """
+        threshold = _cluster_min_children()
+        if threshold <= 0:
+            return set(), set(), {}
+
+        children = {}
+        parents = {}
+        for edge in self.edges_list:
+            # Only reason about edges whose endpoints are real nodes; a phantom
+            # endpoint must never be collapsed or leave a dangling edge behind.
+            if edge["source"] not in self.nodes_dict or edge["target"] not in self.nodes_dict:
+                continue
+            children.setdefault(edge["source"], []).append(edge)
+            parents.setdefault(edge["target"], set()).add(edge["source"])
+
+        collapsed_nodes = set()
+        collapsed_edges = set()
+        clusters = {}
+        internal_keys = ("raw_logs", "_search_text")
+
+        for hub_id, hub_edges in children.items():
+            hub = self.nodes_dict.get(hub_id)
+            if not hub or hub.get("group") != "process":
+                continue
+
+            # Exclusively-owned artifact children (their only parent is this hub).
+            members = [
+                edge["target"]
+                for edge in hub_edges
+                if edge["target"] not in collapsed_nodes
+                and self.nodes_dict.get(edge["target"], {}).get("group") != "process"
+                and parents.get(edge["target"]) == {hub_id}
+            ]
+            if len(members) < threshold:
+                continue
+
+            member_set = set(members)
+            member_edges = [
+                edge
+                for edge in self.edges_list
+                if edge["source"] == hub_id and edge["target"] in member_set
+            ]
+
+            hub_label = (hub.get("label") or hub_id).split("\n")[0]
+            cluster_id = f"cluster_{hub_id}"
+            cluster_node = {
+                "id": cluster_id,
+                "label": f"+{len(member_set)}",
+                "group": "cluster",
+                "title": (
+                    f"{len(member_set)} exclusively-owned artifacts of {hub_label} "
+                    "are collapsed.\nExpand the cluster to load them on demand."
+                ),
+                "isCluster": True,
+                "clusterCount": len(member_set),
+                "parentId": hub_id,
+            }
+            cluster_edge = {
+                "id": f"cluster_edge_{hub_id}",
+                "source": hub_id,
+                "target": cluster_id,
+                "label": "",
+                "color": "#64748b",
+                "event_simplename": "",
+                "dashed": True,
+                "raw_logs_total": 0,
+            }
+
+            clusters[cluster_id] = {
+                "node": cluster_node,
+                "edge": cluster_edge,
+                "nodes": [
+                    {"data": {k: v for k, v in self.nodes_dict[node_id].items() if k not in internal_keys}}
+                    for node_id in members
+                ],
+                "edges": [
+                    {"data": {k: v for k, v in edge.items() if k not in internal_keys}}
+                    for edge in member_edges
+                ],
+            }
+            collapsed_nodes.update(member_set)
+            collapsed_edges.update(edge["id"] for edge in member_edges)
+
+        return collapsed_nodes, collapsed_edges, clusters
+
     def build_cytoscape_elements(self):
         """Split the graph into lightweight elements plus server-side side maps.
 
@@ -250,23 +366,40 @@ class GraphBuilder:
         * ``raw_logs`` is served on demand by ``/api/graph/{id}/element-logs``.
         * ``search_index`` backs ``/api/graph/{id}/search`` so the global search
           can run over raw events without sending them to the client.
+
+        ``clusters`` holds collapsed subtrees; the initial ``elements`` only
+        carry the placeholder node/edge. Raw logs and search entries are still
+        built for the collapsed nodes, so evidence and search keep working once
+        a cluster is expanded.
         """
         internal_keys = ("raw_logs", "_search_text")
         raw_logs_map = {}
         search_index = {}
-        cy_nodes = []
         for n_data in self.nodes_dict.values():
             data = {key: value for key, value in n_data.items() if key not in internal_keys}
             raw_logs_map[data["id"]] = n_data.get("raw_logs", [])
             search_index[data["id"]] = _build_search_text(data, n_data.get("_search_text", ""))
-            cy_nodes.append({"data": data})
-
-        cy_edges = []
         for e_data in self.edges_list:
             data = {key: value for key, value in e_data.items() if key not in internal_keys}
             raw_logs_map[data["id"]] = e_data.get("raw_logs", [])
             search_index[data["id"]] = _build_search_text(data, e_data.get("_search_text", ""))
-            cy_edges.append({"data": data})
+
+        collapsed_node_ids, collapsed_edge_ids, clusters = self._plan_clusters()
+
+        cy_nodes = [
+            {"data": {k: v for k, v in n_data.items() if k not in internal_keys}}
+            for n_id, n_data in self.nodes_dict.items()
+            if n_id not in collapsed_node_ids
+        ]
+        cy_edges = [
+            {"data": {k: v for k, v in e_data.items() if k not in internal_keys}}
+            for e_data in self.edges_list
+            if e_data["id"] not in collapsed_edge_ids
+        ]
+
+        for cluster in clusters.values():
+            cy_nodes.append({"data": cluster["node"]})
+            cy_edges.append({"data": cluster["edge"]})
 
         return {
             "elements": {
@@ -275,5 +408,6 @@ class GraphBuilder:
             },
             "raw_logs": raw_logs_map,
             "search_index": search_index,
-            "unmapped_events": self.unmapped_events
+            "unmapped_events": self.unmapped_events,
+            "clusters": clusters,
         }

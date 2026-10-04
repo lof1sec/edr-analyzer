@@ -76,6 +76,7 @@ node style sets `border-width: 2`; the table lists overrides.
 | `commandline` | Command line | `rectangle` | `#332b00` | `#ffcc00` | 1 |
 | `powershell` | PowerShell | `rectangle` | `#4d2e00` | `#ff9900` | 1 |
 | `commandline-exec` | Command exec | `rectangle` | `#431407` | `#c2410c` | 1 |
+| `cluster` | Collapsed | `diamond` | `#1e293b` | `#94a3b8` | 2 |
 | `alert` | Alert | `star` | `#b30000` | `#ff0000` | 3 |
 
 **Rules**
@@ -254,6 +255,13 @@ Defined in `frontend/src/components/cytoscapeStyles.js`.
 - **Spotlight:** `.dimmed` → `opacity: 0.12` (selected neighbourhood only).
 - **Selection:** selected node gets a `#ffffff` border of width 4 and
   `overlay-opacity: 0`; selected edge width 4.
+- **Cluster placeholder:** `group="cluster"` nodes (diamond) carry a `+N` label
+  and expand on click into their hidden subtree
+  (`GET /api/graph/{id}/clusters/{cluster_id}`). Expanded clusters are listed in
+  the Filters panel with per-cluster and "Collapse All" actions.
+- **Saved layout:** node positions persist per dataset (`graph_layouts`); when one
+  exists the force layout loads as a `preset`, and "Reset layout" clears it and
+  re-runs the force layout.
 
 ---
 

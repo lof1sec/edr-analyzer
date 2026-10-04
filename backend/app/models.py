@@ -34,3 +34,23 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GraphLayout(Base):
+    """Saved node positions for a dataset's graph (one row per dataset).
+
+    Kept in its own table so listing datasets never has to load the (potentially
+    large) positions blob. ``positions`` is ``{node_id: {x, y}}`` and survives
+    re-opening a dataset, so a user's arrangement is not lost.
+    """
+
+    __tablename__ = "graph_layouts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(
+        Integer, ForeignKey("datasets.id"), unique=True, index=True, nullable=False
+    )
+    positions = Column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
+    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

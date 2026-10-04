@@ -22,6 +22,19 @@ class GraphResponse(BaseModel):
     elements: dict[str, list[Any]] # contains nodes and edges
 
 
+class Position(BaseModel):
+    """A saved node position (Cytoscape coordinates)."""
+
+    x: float
+    y: float
+
+
+class LayoutRequest(BaseModel):
+    """Persisted graph layout: node id -> position."""
+
+    positions: dict[str, Position] = Field(default_factory=dict)
+
+
 class AuthStatus(BaseModel):
     """Tells the SPA whether to show first-run setup and if a session is active."""
 

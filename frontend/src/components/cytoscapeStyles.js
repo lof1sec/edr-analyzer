@@ -12,6 +12,8 @@ export const NODE_GROUPS = [
   { group: 'powershell', label: 'PowerShell', shape: 'rectangle', color: '#4d2e00', border: '#ff9900', borderWidth: 1 },
   // PowerShell command / command history artifacts (darker orange).
   { group: 'commandline-exec', label: 'Command exec', shape: 'rectangle', color: '#431407', border: '#c2410c', borderWidth: 1 },
+  // Placeholder for a collapsed subtree; click to expand on demand.
+  { group: 'cluster', label: 'Collapsed', shape: 'diamond', color: '#1e293b', border: '#94a3b8', borderWidth: 2 },
   { group: 'alert', label: 'Alert', shape: 'star', color: '#b30000', border: '#ff0000', borderWidth: 3 },
 ];
 

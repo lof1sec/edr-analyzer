@@ -76,6 +76,23 @@ export const api = {
 
   searchGraph: (id, query) =>
     request(`/api/graph/${id}/search?q=${encodeURIComponent(query)}`),
+
+  getCluster: (id, clusterId) =>
+    request(`/api/graph/${id}/clusters/${encodeURIComponent(clusterId)}`),
+
+  getNeighbors: (id, elementId, depth = 1) =>
+    request(
+      `/api/graph/${id}/neighbors?element_id=${encodeURIComponent(elementId)}&depth=${depth}`
+    ),
+
+  getLayout: (id) => request(`/api/graph/${id}/layout`),
+
+  saveLayout: (id, positions) =>
+    request(`/api/graph/${id}/layout`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positions }),
+    }),
 };
 
 export { API_URL };

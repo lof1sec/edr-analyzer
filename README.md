@@ -27,6 +27,12 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
 - **Dynamic filtering:** Global text search plus per-event-type, per-user and
   per-PID toggles, with an "unmapped events" report.
 - **Multiple layouts:** Force-directed, tree and node-centric (concentric).
+- **Saved layout:** your node arrangement is persisted per dataset and restored
+  when you reopen the graph ("Reset layout" regenerates it).
+- **Clustering & lazy loading:** a process that fans out to many exclusively-owned
+  artifacts (files, registry, network, command lines…) collapses them into a `+N`
+  placeholder that loads on demand. Processes and their `Spawns` edges stay
+  visible, so the graph remains connected.
 - **Deep inspection:** Click any node or edge to inspect its metadata and the
   raw log events behind it, with copy-to-clipboard.
 - **Schema migrations:** Alembic runs automatically on backend startup.
@@ -57,6 +63,9 @@ products. Events that match neither marker are still stored (event type
 3. **Build graph** — `GET /api/graph/{id}` loads the dataset's events in a
    deterministic order and feeds them to `GraphBuilder` plus the per-vendor
    parsers, producing Cytoscape `{ nodes, edges, unmapped_events }`.
+   A process hub's exclusively-owned artifact children are collapsed into `+N`
+   cluster placeholders and expanded on demand
+   (`/api/graph/{id}/clusters/…`); process nodes are never collapsed.
 4. **Visualise** — the React frontend renders the graph and applies all
    filtering client-side.
 
@@ -123,6 +132,7 @@ All settings are read from the environment (via `.env` in Docker Compose).
 | `MAX_UPLOAD_SIZE_MB` | backend | `200` | Maximum accepted upload size; larger files get HTTP 413 |
 | `GRAPH_CACHE_SIZE` | backend | `4` | Generated-graph cache entries kept in memory |
 | `GRAPH_CACHE_TTL_SECONDS` | backend | `300` | Cached graph lifetime in seconds (`0` disables expiry) |
+| `CLUSTER_MIN_CHILDREN` | backend | `50` | Exclusively-owned descendants a hub needs before collapsing into a cluster placeholder (`0` disables) |
 | `SECRET_KEY` | backend | *(ephemeral)* | Secret used to sign session cookies. Set a strong random value for anything beyond local dev |
 | `SESSION_COOKIE_SECURE` | backend | `false` | Set to `true` to restrict the session cookie to HTTPS |
 | `VITE_API_URL` | frontend | `http://localhost:8000` | Base URL of the backend API |
@@ -154,7 +164,10 @@ uvicorn main:app --reload
    - inspect a selected node/edge and its raw logs,
    - review unmapped event types.
 4. **Explore:** switch between Force-directed, Tree and Centered layouts, fit the
-   graph, and hide elements you don't need (`Unhide All` restores them).
+   graph, and hide elements you don't need (`Unhide All` restores them). Click a
+   `+N` cluster to expand it, use **Reveal** to re-show hidden elements within
+   one hop, and **Reset layout** to regenerate the arrangement (your layout is
+   saved per dataset).
 
 ---
 
@@ -174,6 +187,10 @@ uvicorn main:app --reload
 | `GET` | `/api/graph/{dataset_id}` | Cytoscape elements and aggregated unmapped-event counts for a dataset |
 | `GET` | `/api/graph/{dataset_id}/element-logs?element_id=…` | Raw log events for one node/edge (lazily loaded evidence) |
 | `GET` | `/api/graph/{dataset_id}/search?q=…` | Ids of elements matching the search terms (server-side search) |
+| `GET` | `/api/graph/{dataset_id}/clusters/{cluster_id}` | Hidden elements of a collapsed cluster (on-demand expansion) |
+| `GET` | `/api/graph/{dataset_id}/neighbors?element_id=…&depth=…` | Subgraph within N hops of an element (1–3) |
+| `GET` | `/api/graph/{dataset_id}/layout` | Saved node positions for the dataset |
+| `PUT` | `/api/graph/{dataset_id}/layout` | Persist node positions for the dataset |
 | `GET` | `/` | Liveness/status check |
 
 All `/api/datasets` and `/api/graph` endpoints require an authenticated session
@@ -195,7 +212,8 @@ python -m pytest -q
 
 The suite covers vendor detection, upload parsing (CSV/JSONL/JSON-array/single
 object, BOM, latin-1, size/parse limits), the graph builder (stable ids, unique
-edge ids) and Falcon/Defender parser smoke tests.
+edge ids, fan-out clustering), saved layouts, on-demand neighbourhoods and
+Falcon/Defender parser smoke tests.
 
 ### Database migrations
 
@@ -244,9 +262,9 @@ edr-analyzer/
 │   │   ├── routers/
 │   │   │   ├── auth.py       # login / logout / first-run setup + auth guard
 │   │   │   ├── datasets.py   # upload / list / delete
-│   │   │   └── graph.py      # graph generation
+│   │   │   └── graph.py      # graph generation, clusters, layouts
 │   │   ├── database.py       # engine/session (DATABASE_URL)
-│   │   ├── models.py         # Dataset, LogEvent, User
+│   │   ├── models.py         # Dataset, LogEvent, User, GraphLayout
 │   │   ├── security.py       # password hashing (Argon2id)
 │   │   ├── bootstrap.py      # provision the admin from the environment
 │   │   └── schemas.py        # Pydantic schemas

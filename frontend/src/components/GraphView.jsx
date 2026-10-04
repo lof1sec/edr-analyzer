@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -117,11 +117,22 @@ export default function GraphView({ datasetId }) {
   const [logsLoading, setLogsLoading] = useState(false);
   const [layoutMode, setLayoutMode] = useState('force');
   const [focusDepth, setFocusDepth] = useState(0);
+  // Bumped to force a re-layout after resetting the saved arrangement.
+  const [layoutKey, setLayoutKey] = useState(0);
+  // Element count of the initial payload: layout decisions use this instead of
+  // `elements.length` so expanding a cluster/neighbourhood does not re-run the
+  // whole layout (the graph would jump around).
+  const [baseElementCount, setBaseElementCount] = useState(0);
+  // cluster_id -> { node, edge, memberIds, memberEdgeIds } for the expanded set.
+  const [expandedClusters, setExpandedClusters] = useState({});
   const cyRef = useRef(null);
   const initialPositions = useRef({});
   const isRightPaneOpenRef = useRef(true);
   const layoutModeRef = useRef(layoutMode);
   const rawLogsCache = useRef(new Map());
+  const datasetIdRef = useRef(datasetId);
+  const saveTimer = useRef(null);
+  const expandClusterRef = useRef(null);
 
   // Filters state
   const [globalSearch, setGlobalSearch] = useState('');
@@ -151,6 +162,7 @@ export default function GraphView({ datasetId }) {
   // Keep refs in sync so long-lived cytoscape listeners read fresh values.
   useEffect(() => { isRightPaneOpenRef.current = isRightPaneOpen; }, [isRightPaneOpen]);
   useEffect(() => { layoutModeRef.current = layoutMode; }, [layoutMode]);
+  useEffect(() => { datasetIdRef.current = datasetId; }, [datasetId]);
 
   const elementsById = useMemo(() => {
     const map = new Map();
@@ -171,11 +183,21 @@ export default function GraphView({ datasetId }) {
     setFocusDepth(0);
     setLayoutMode('force');
     setSearchResult({ q: '', ids: null });
+    setExpandedClusters({});
     setError(null);
     const fetchGraph = async () => {
       setLoading(true);
       try {
-        const data = await api.getGraph(datasetId);
+        const [data, savedLayout] = await Promise.all([
+          api.getGraph(datasetId),
+          api.getLayout(datasetId).catch(() => null),
+        ]);
+
+        // Restore the saved arrangement (if any) before the layout memo runs.
+        const saved = savedLayout?.positions;
+        if (saved && Object.keys(saved).length > 0) {
+          initialPositions.current = saved;
+        }
 
         const uniqueEvents = new Set();
         const uniqueUsers = new Set();
@@ -201,6 +223,7 @@ export default function GraphView({ datasetId }) {
           ...(data.elements.edges || [])
         ];
 
+        setBaseElementCount(cyElements.length);
         setElements(cyElements);
         setUnmappedEvents(data.unmapped_events || {});
       } catch (err) {
@@ -378,10 +401,14 @@ export default function GraphView({ datasetId }) {
   // Memoise the layout object: react-cytoscapejs re-runs the layout whenever
   // the prop reference changes, so a fresh object on every render (e.g. when
   // merely selecting a node) caused constant re-layouts.
-  const layout = useMemo(
-    () => getLayoutConfig(layoutMode, initialPositions.current, centeredOn, elements.length),
-    [layoutMode, centeredOn, elements.length]
-  );
+  const layout = useMemo(() => {
+    // `datasetId`/`layoutKey` force a fresh layout object when the dataset
+    // changes or the saved arrangement is reset, even if the element count is
+    // unchanged; the layout itself does not need their values.
+    void datasetId;
+    void layoutKey;
+    return getLayoutConfig(layoutMode, initialPositions.current, centeredOn, baseElementCount);
+  }, [layoutMode, centeredOn, baseElementCount, datasetId, layoutKey]);
 
   // The stylesheet is static: memoise it so react-cytoscapejs does not re-apply
   // the whole style (a fresh array reference triggers style.fromJson().update())
@@ -407,6 +434,194 @@ export default function GraphView({ datasetId }) {
     });
   };
 
+  // Persist the current node positions (debounced). The in-memory snapshot is
+  // updated immediately so switching back to the force layout snaps to the
+  // user's latest arrangement even before the request completes.
+  const persistLayout = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const fresh = {};
+    cy.nodes().forEach(node => {
+      const pos = node.position();
+      fresh[node.id()] = { x: pos.x, y: pos.y };
+    });
+    // Keep positions of currently-collapsed nodes too, so collapsing a cluster
+    // restores it where it was.
+    const positions = { ...initialPositions.current, ...fresh };
+    initialPositions.current = positions;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      if (datasetIdRef.current) {
+        api.saveLayout(datasetIdRef.current, positions).catch(err => {
+          console.error('Failed to save layout', err);
+        });
+      }
+    }, 800);
+  }, []);
+
+  const resetLayout = async () => {
+    initialPositions.current = {};
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    try {
+      if (datasetIdRef.current) await api.saveLayout(datasetIdRef.current, {});
+    } catch (err) {
+      console.error('Failed to clear layout', err);
+    }
+    setLayoutMode('force');
+    setLayoutKey(k => k + 1);
+  };
+
+  // Lay elements out in a ring around `origin`, so merged-on-demand elements do
+  // not pile up at (0, 0) and the whole graph does not need a re-layout.
+  const ringPositions = (items, origin) => {
+    const radius = 90;
+    return items.map((element, index) => {
+      const angle = (2 * Math.PI * index) / Math.max(items.length, 1);
+      return {
+        ...element,
+        position: { x: origin.x + radius * Math.cos(angle), y: origin.y + radius * Math.sin(angle) },
+      };
+    });
+  };
+
+  const expandCluster = useCallback(async (clusterId) => {
+    const cy = cyRef.current;
+    if (!cy || !datasetIdRef.current) return;
+    const clusterNode = cy.getElementById(clusterId);
+    if (clusterNode.empty()) return;
+
+    const clusterData = clusterNode.data();
+    const hubId = clusterData.parentId;
+    const hub = hubId ? cy.getElementById(hubId) : null;
+    const origin = hub && hub.nonempty() ? hub.position() : clusterNode.position();
+    const clusterEdge = cy.getElementById(`cluster_edge_${hubId}`);
+    const clusterEdgeData = clusterEdge.nonempty() ? clusterEdge.data() : null;
+
+    try {
+      const res = await api.getCluster(datasetIdRef.current, clusterId);
+      const nodes = res.nodes || [];
+      const edges = res.edges || [];
+      setElements(prev => prev
+        .filter(el => el.data.id !== clusterId && el.data.id !== res.cluster_edge_id)
+        .concat(ringPositions(nodes, origin), edges)
+      );
+      setExpandedClusters(prev => ({
+        ...prev,
+        [clusterId]: {
+          node: { data: clusterData },
+          edge: clusterEdgeData ? { data: clusterEdgeData } : null,
+          memberIds: nodes.map(n => n.data.id),
+          memberEdgeIds: edges.map(e => e.data.id),
+        },
+      }));
+      toast.info(`Expanded ${nodes.length} collapsed element${nodes.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Could not expand the cluster.');
+    }
+  }, []);
+
+  useEffect(() => { expandClusterRef.current = expandCluster; }, [expandCluster]);
+
+  const collapseCluster = (clusterId) => {
+    const info = expandedClusters[clusterId];
+    if (!info) return;
+    const memberIds = new Set([...info.memberIds, ...info.memberEdgeIds]);
+    setElements(prev => prev
+      .filter(el => !memberIds.has(el.data.id))
+      .concat([info.node, info.edge].filter(Boolean))
+    );
+    setExpandedClusters(prev => {
+      const next = { ...prev };
+      delete next[clusterId];
+      return next;
+    });
+  };
+
+  const collapseAllClusters = () => {
+    const memberIds = new Set();
+    const restored = [];
+    Object.values(expandedClusters).forEach(info => {
+      info.memberIds.forEach(id => memberIds.add(id));
+      info.memberEdgeIds.forEach(id => memberIds.add(id));
+      if (info.node) restored.push(info.node);
+      if (info.edge) restored.push(info.edge);
+    });
+    setElements(prev => prev.filter(el => !memberIds.has(el.data.id)).concat(restored));
+    setExpandedClusters({});
+  };
+
+  // Reveal the selected node's 1-hop neighbourhood when it is hidden by manual
+  // hides, identity/event filters, the global search or the focus depth. It acts
+  // on elements already in the graph (no server round-trip) and is the targeted
+  // counterpart to "Unhide All".
+  const revealNeighbors = () => {
+    const cy = cyRef.current;
+    if (!cy || !selectedNode?.id) return;
+    const selected = cy.getElementById(selectedNode.id);
+    if (selected.empty() || !selected.isNode()) return;
+
+    const neighborhood = selected.closedNeighborhood();
+    let hiddenCount = 0;
+    const ids = new Set();
+    const usersToShow = new Set();
+    const pidsToShow = new Set();
+    const eventsToShow = new Set();
+
+    neighborhood.forEach(el => {
+      ids.add(el.id());
+      if (el.hasClass('hidden')) hiddenCount += 1;
+      const data = el.data();
+      if (el.isNode() && data.group === 'process') {
+        if (data.username) usersToShow.add(data.username);
+        if (data.id) pidsToShow.add(data.id);
+      } else if (el.isEdge() && data.event_simplename) {
+        eventsToShow.add(data.event_simplename);
+      }
+    });
+
+    if (hiddenCount === 0) {
+      toast.info('Neighbourhood is already visible.');
+      return;
+    }
+
+    setManuallyHidden(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.delete(id));
+      return next;
+    });
+    if (usersToShow.size) {
+      setUsers(prev => {
+        const next = { ...prev };
+        usersToShow.forEach(user => { next[user] = true; });
+        return next;
+      });
+    }
+    if (pidsToShow.size) {
+      setPids(prev => {
+        const next = { ...prev };
+        pidsToShow.forEach(pid => { next[pid] = true; });
+        return next;
+      });
+    }
+    if (eventsToShow.size) {
+      setEventTypes(prev => {
+        const next = { ...prev };
+        eventsToShow.forEach(event => { next[event] = true; });
+        return next;
+      });
+    }
+    // The global search and the focus depth can hide the neighbourhood too.
+    if (globalSearch) setGlobalSearch('');
+    if (focusDepth > 0) setFocusDepth(0);
+
+    toast.success(
+      `Revealed ${hiddenCount} neighbouring element${hiddenCount === 1 ? '' : 's'}.`
+    );
+  };
+
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
   // react-cytoscapejs invokes this on every mount and update. Listeners are
   // attached here — right where the instance is created — and guarded by
   // instance identity. This mirrors the original (working) pattern while
@@ -418,8 +633,14 @@ export default function GraphView({ datasetId }) {
     cyRef.current = cy;
 
     const onElementTap = (event) => {
+      const data = event.target.data();
+      // A collapsed hub is a button: tapping it loads its hidden subtree.
+      if (data.isCluster) {
+        if (expandClusterRef.current) expandClusterRef.current(data.id);
+        return;
+      }
       setSelectedLogs([]);
-      setSelectedNode(event.target.data());
+      setSelectedNode(data);
       if (!isRightPaneOpenRef.current) {
         setIsRightPaneOpen(true);
       }
@@ -435,20 +656,22 @@ export default function GraphView({ datasetId }) {
     };
 
     // Capture the initial force layout once per dataset so we can snap back to
-    // it when the user switches layouts and returns.
+    // it when the user switches layouts and returns, then persist the result.
     const onLayoutStop = () => {
       if (Object.keys(initialPositions.current).length === 0 && layoutModeRef.current === 'force') {
         cy.nodes().forEach(node => {
           initialPositions.current[node.id()] = { ...node.position() };
         });
       }
+      persistLayout();
     };
 
     cy.on('tap', 'node', onElementTap);
     cy.on('tap', 'edge', onElementTap);
     cy.on('tap', onBackgroundTap);
     cy.on('layoutstop', onLayoutStop);
-  }, []);
+    cy.on('dragfree', 'node', persistLayout);
+  }, [persistLayout]);
 
   // Resize cytoscape on pane toggle so canvas redraws to fit new width
   useEffect(() => {
@@ -569,6 +792,15 @@ export default function GraphView({ datasetId }) {
                 title="Fit the graph to the viewport"
             >
                 Fit Graph
+            </button>
+            <button
+                onClick={resetLayout}
+                className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                title="Clear the saved arrangement and re-run the force layout"
+                aria-label="Reset layout"
+            >
+                <RotateCcw size={14} />
+                Reset layout
             </button>
             <div className="flex items-center bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded shadow overflow-hidden">
               <button
@@ -702,6 +934,16 @@ export default function GraphView({ datasetId }) {
                     >
                       Hide
                     </button>
+                    {selectedNode.group && (
+                      <button
+                        onClick={revealNeighbors}
+                        className="shrink-0 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 px-2 py-1 rounded hover:bg-blue-200 dark:hover:bg-blue-800/50 transition-colors font-semibold flex items-center gap-1"
+                        title="Reveal hidden elements within one hop"
+                      >
+                        <Eye size={12} />
+                        Reveal
+                      </button>
+                    )}
                     {selectedLogs.length > 0 && (
                        <CopyButton textToCopy={JSON.stringify(selectedLogs, null, 2)} />
                     )}
@@ -777,6 +1019,35 @@ export default function GraphView({ datasetId }) {
                   >
                     Unhide All
                   </button>
+                </div>
+              )}
+
+              {Object.keys(expandedClusters).length > 0 && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs text-blue-800 dark:text-blue-300 font-semibold">
+                      {Object.keys(expandedClusters).length} expanded cluster
+                      {Object.keys(expandedClusters).length > 1 ? 's' : ''}
+                    </span>
+                    <button
+                      onClick={collapseAllClusters}
+                      className="text-[10px] bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200 px-2 py-1 rounded hover:bg-blue-300 dark:hover:bg-blue-700 transition-colors font-bold"
+                    >
+                      Collapse All
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {Object.entries(expandedClusters).map(([clusterId, info]) => (
+                      <button
+                        key={clusterId}
+                        onClick={() => collapseCluster(clusterId)}
+                        className="w-full text-left text-[10px] bg-white/60 dark:bg-slate-800/60 border border-blue-200 dark:border-blue-800 rounded px-2 py-1 hover:bg-white dark:hover:bg-slate-800 transition-colors font-mono truncate text-slate-700 dark:text-slate-300"
+                        title={`Collapse ${info.memberIds.length} elements`}
+                      >
+                        {info.node?.data?.label || clusterId} · {info.memberIds.length} elements
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
