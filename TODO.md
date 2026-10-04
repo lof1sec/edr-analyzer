@@ -51,17 +51,20 @@ carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
 
 ### 3.3 Vecinos lazy / paginación — 🚧 PARCIAL
 
-- [x] **Endpoint de vecindario**:
+- [x] **Endpoint de vecindario** (base para la carga progresiva):
       `GET /api/graph/{id}/neighbors?element_id=…&depth=1..3`, con tope de
       `MAX_NEIGHBOR_NODES` (2000) y flag `truncated`.
-      `backend/app/routers/graph.py`.
-- [x] **Acción "Neighbours"** en el panel de detalle: carga y fusiona el
-      vecindario de un nodo sin recargar el grafo.
-- [x] **Base reutilizable de fusión**: los elementos nuevos se añaden con
-      posiciones calculadas (mismo mecanismo que el clustering).
+      `backend/app/routers/graph.py`. Sigue disponible (sin usar por la UI).
+- [x] **Botón "Reveal"** en Node Details (opción 1): vuelve a mostrar el
+      vecindario a 1 salto que esté oculto por "Hide", los filtros de
+      usuario/PID/evento, la búsqueda global o el foco. Es **client-side** (no
+      llama al servidor) y actúa como "Unhide All" dirigido.
+- [x] **Base reutilizable de fusión**: los elementos nuevos (clusters) se añaden
+      con posiciones calculadas.
 - [ ] **Carga inicial progresiva**: no enviar todo el grafo en datasets muy
-      grandes; cargar raíces y expandir vecindario a demanda. Requiere rediseñar
-      filtros y layout sobre un grafo parcial (pendiente).
+      grandes; cargar raíces y expandir vecindario a demanda (reutilizando el
+      endpoint y la fusión). Requiere rediseñar filtros y layout sobre un grafo
+      parcial (pendiente).
 
 ---
 

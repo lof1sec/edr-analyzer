@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Share2 } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -551,32 +551,73 @@ export default function GraphView({ datasetId }) {
     setExpandedClusters({});
   };
 
-  const expandNeighbors = async () => {
+  // Reveal the selected node's 1-hop neighbourhood when it is hidden by manual
+  // hides, identity/event filters, the global search or the focus depth. It acts
+  // on elements already in the graph (no server round-trip) and is the targeted
+  // counterpart to "Unhide All".
+  const revealNeighbors = () => {
     const cy = cyRef.current;
-    if (!cy || !selectedNode?.id || !datasetIdRef.current) return;
-    const node = cy.getElementById(selectedNode.id);
-    if (node.empty() || !node.isNode()) return;
-    const origin = node.position();
-    try {
-      const res = await api.getNeighbors(datasetIdRef.current, selectedNode.id, 1);
-      const present = new Set(cy.elements().map(el => el.id()));
-      const newNodes = (res.nodes || []).filter(n => !present.has(n.data.id));
-      const newEdges = (res.edges || []).filter(e => !present.has(e.data.id));
-      if (newNodes.length === 0 && newEdges.length === 0) {
-        toast.info('No additional neighbours to load.');
-        return;
+    if (!cy || !selectedNode?.id) return;
+    const selected = cy.getElementById(selectedNode.id);
+    if (selected.empty() || !selected.isNode()) return;
+
+    const neighborhood = selected.closedNeighborhood();
+    let hiddenCount = 0;
+    const ids = new Set();
+    const usersToShow = new Set();
+    const pidsToShow = new Set();
+    const eventsToShow = new Set();
+
+    neighborhood.forEach(el => {
+      ids.add(el.id());
+      if (el.hasClass('hidden')) hiddenCount += 1;
+      const data = el.data();
+      if (el.isNode() && data.group === 'process') {
+        if (data.username) usersToShow.add(data.username);
+        if (data.id) pidsToShow.add(data.id);
+      } else if (el.isEdge() && data.event_simplename) {
+        eventsToShow.add(data.event_simplename);
       }
-      setElements(prev => {
-        const existing = new Set(prev.map(el => el.data.id));
-        const additions = [...ringPositions(newNodes, origin), ...newEdges]
-          .filter(el => !existing.has(el.data.id));
-        return prev.concat(additions);
-      });
-      toast.info(`Loaded ${newNodes.length} neighbouring element${newNodes.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      console.error(err);
-      toast.error('Could not load the neighbourhood.');
+    });
+
+    if (hiddenCount === 0) {
+      toast.info('Neighbourhood is already visible.');
+      return;
     }
+
+    setManuallyHidden(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.delete(id));
+      return next;
+    });
+    if (usersToShow.size) {
+      setUsers(prev => {
+        const next = { ...prev };
+        usersToShow.forEach(user => { next[user] = true; });
+        return next;
+      });
+    }
+    if (pidsToShow.size) {
+      setPids(prev => {
+        const next = { ...prev };
+        pidsToShow.forEach(pid => { next[pid] = true; });
+        return next;
+      });
+    }
+    if (eventsToShow.size) {
+      setEventTypes(prev => {
+        const next = { ...prev };
+        eventsToShow.forEach(event => { next[event] = true; });
+        return next;
+      });
+    }
+    // The global search and the focus depth can hide the neighbourhood too.
+    if (globalSearch) setGlobalSearch('');
+    if (focusDepth > 0) setFocusDepth(0);
+
+    toast.success(
+      `Revealed ${hiddenCount} neighbouring element${hiddenCount === 1 ? '' : 's'}.`
+    );
   };
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
@@ -895,12 +936,12 @@ export default function GraphView({ datasetId }) {
                     </button>
                     {selectedNode.group && (
                       <button
-                        onClick={expandNeighbors}
+                        onClick={revealNeighbors}
                         className="shrink-0 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 px-2 py-1 rounded hover:bg-blue-200 dark:hover:bg-blue-800/50 transition-colors font-semibold flex items-center gap-1"
-                        title="Load neighbouring elements on demand"
+                        title="Reveal hidden elements within one hop"
                       >
-                        <Share2 size={12} />
-                        Neighbours
+                        <Eye size={12} />
+                        Reveal
                       </button>
                     )}
                     {selectedLogs.length > 0 && (

@@ -163,8 +163,8 @@ uvicorn main:app --reload
    - review unmapped event types.
 4. **Explore:** switch between Force-directed, Tree and Centered layouts, fit the
    graph, and hide elements you don't need (`Unhide All` restores them). Click a
-   `+N` cluster to expand it, use **Neighbours** to load adjacent elements on
-   demand, and **Reset layout** to regenerate the arrangement (your layout is
+   `+N` cluster to expand it, use **Reveal** to re-show hidden elements within
+   one hop, and **Reset layout** to regenerate the arrangement (your layout is
    saved per dataset).
 
 ---
