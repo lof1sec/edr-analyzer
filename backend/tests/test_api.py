@@ -67,3 +67,80 @@ def test_upload_rejects_malformed_json_with_400(admin_client):
 def test_upload_rejects_unsupported_extension_with_400(admin_client):
     resp = _upload(admin_client, b"nope", "events.txt", "text/plain")
     assert resp.status_code == 400
+
+
+def _upload_defender_rows(client, rows, name="events.csv"):
+    header = (
+        b"ActionType,DeviceName,InitiatingProcessId,ProcessId,"
+        b"InitiatingProcessFileName,FileName\n"
+    )
+    return _upload(client, header + rows, name)
+
+
+def test_layout_can_be_saved_and_fetched(admin_client):
+    dataset_id = _upload_defender_rows(
+        admin_client,
+        b"ProcessCreated,H1,500,600,services.exe,svchost.exe\n",
+        "layout.csv",
+    ).json()["dataset_id"]
+
+    assert admin_client.get(f"/api/graph/{dataset_id}/layout").json()["positions"] == {}
+
+    saved = admin_client.put(
+        f"/api/graph/{dataset_id}/layout",
+        json={"positions": {"600": {"x": 10, "y": 20}}},
+    )
+    assert saved.status_code == 200
+
+    positions = admin_client.get(f"/api/graph/{dataset_id}/layout").json()["positions"]
+    assert positions == {"600": {"x": 10.0, "y": 20.0}}
+
+
+def test_layout_for_missing_dataset_returns_404(admin_client):
+    assert admin_client.get("/api/graph/999999/layout").status_code == 404
+
+
+def test_hub_descendants_are_collapsed_and_expandable(admin_client, monkeypatch):
+    monkeypatch.setenv("CLUSTER_MIN_CHILDREN", "2")
+    rows = b"".join(
+        f"FileCreated,H1,500,,hub.exe,file{i}.dll\n".encode() for i in range(3)
+    )
+    dataset_id = _upload_defender_rows(admin_client, rows, "hub.csv").json()["dataset_id"]
+
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    cluster_nodes = [
+        node["data"] for node in graph["elements"]["nodes"] if node["data"].get("isCluster")
+    ]
+    assert len(cluster_nodes) == 1
+    assert cluster_nodes[0]["clusterCount"] == 3
+
+    # The collapsed files are not part of the initial payload...
+    node_ids = {node["data"]["id"] for node in graph["elements"]["nodes"]}
+    assert "file0.dll" not in node_ids
+
+    # ...but are returned on demand by the cluster endpoint.
+    expanded = admin_client.get(
+        f"/api/graph/{dataset_id}/clusters/{cluster_nodes[0]['id']}"
+    ).json()
+    assert {node["data"]["id"] for node in expanded["nodes"]} == {
+        "file0.dll",
+        "file1.dll",
+        "file2.dll",
+    }
+    assert len(expanded["edges"]) == 3
+
+
+def test_neighbors_endpoint_returns_subgraph(admin_client):
+    dataset_id = _upload_defender_rows(
+        admin_client,
+        b"ProcessCreated,H1,500,600,services.exe,svchost.exe\n"
+        b"FileCreated,H1,600,,svchost.exe,evil.dll\n",
+        "neighbors.csv",
+    ).json()["dataset_id"]
+
+    neighbors = admin_client.get(
+        f"/api/graph/{dataset_id}/neighbors", params={"element_id": "600"}
+    ).json()
+    ids = {node["data"]["id"] for node in neighbors["nodes"]}
+    assert "600" in ids
+    assert "evil.dll" in ids

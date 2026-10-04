@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Dataset, LogEvent
+from app.models import Dataset, GraphLayout, LogEvent
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
 from app.routers.auth import require_user
@@ -312,6 +312,11 @@ def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
     # Bulk-delete the events instead of letting the ORM cascade load and delete
     # them one by one, which is very slow for large datasets.
     db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id).delete(
+        synchronize_session=False
+    )
+    # The saved layout belongs to the dataset; delete it explicitly so a reused
+    # dataset id never inherits a previous graph's arrangement.
+    db.query(GraphLayout).filter(GraphLayout.dataset_id == dataset_id).delete(
         synchronize_session=False
     )
     db.delete(dataset)

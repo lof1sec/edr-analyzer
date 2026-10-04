@@ -63,6 +63,7 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 | `DATABASE_URL` | Full SQLAlchemy URL (only needed outside Compose) |
 | `GRAPH_CACHE_SIZE` | Generated-graph cache entries (default `4`) |
 | `GRAPH_CACHE_TTL_SECONDS` | Cached graph lifetime, seconds (default `300`; `0` disables) |
+| `CLUSTER_MIN_CHILDREN` | Exclusively-owned descendants a hub needs before they are collapsed into a cluster placeholder (default `50`; `0` disables clustering) |
 | `SECRET_KEY` | Signs session cookies; unset → ephemeral key (sessions lost on restart) |
 | `SESSION_COOKIE_SECURE` | `true` restricts the session cookie to HTTPS (default `false`) |
 
@@ -80,7 +81,8 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   (Postgres credentials) on startup.
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
-  lazy raw-log and search endpoints, cache-backed payloads.
+  lazy raw-log/search/cluster/neighbour endpoints, saved-layout read/write, and
+  cache-backed payloads.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
   generated graphs; invalidated on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
@@ -133,10 +135,16 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    credentials also log into the app; `/api/auth/setup` is only a fallback when no
    environment credentials are set. Existing accounts are never overwritten, so a
    password changed in-app survives restarts.
+10. **Clustering and saved layouts are non-destructive and dataset-scoped.**
+    Clustering only collapses *exclusively-owned* descendants (all in/out edges
+    stay inside the set), so a shared node is never hidden and no edge dangles;
+    the hidden elements plus their search/raw-log entries remain available for
+    on-demand expansion. Saved layouts live in `graph_layouts` (one row per
+    dataset) and are deleted with the dataset.
 
 ## Testing
 
-- Backend: `backend/tests/` (63 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (68 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
