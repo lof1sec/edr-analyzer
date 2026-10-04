@@ -199,6 +199,92 @@ nodo para colorearlo.
 
 ---
 
+## Fuzzing de parsers con Hypothesis
+
+**Estado:** planificado (sin implementar).
+
+**Objetivo:** garantizar con tests *property-based* que el pipeline de parsing
+(puro, sin HTTP ni DB) es robusto ante cualquier entrada y que los invariantes del
+grafo se mantienen siempre. Busca dos propiedades:
+
+1. **Nunca crashea** con excepciones no esperadas ante eventos desconocidos, tipos
+   raros (`None`, int, listas), JSON roto o bytes corruptos.
+2. **El grafo sale íntegro:** serializable a JSON, ids únicos, sin aristas
+   colgantes y sin colapsar procesos.
+
+**Qué resuelve (valor):**
+
+- **Crashes por tipos inesperados** que hoy serían un 500 (p. ej. `ImageFileName`
+  no-str y `.split()` en `falcon.py`).
+- **JSON/CSV malformado** que no se traduce a un `HTTPException` 400/413 limpio
+  (p. ej. `csv.Error`, `UnicodeDecodeError` sin capturar).
+- **Invariantes del grafo** que nadie comprueba de forma exhaustiva: ids únicos,
+  sin colisión nodo/arista, sin aristas a nodos inexistentes, clustering no
+  destructivo.
+- **Seguridad/disponibilidad:** los parsers consumen ficheros subidos por el
+  usuario; un input que provoque excepción no controlada o consumo desmedido es un
+  vector de DoS.
+- **Red de seguridad permanente** en CI contra regresiones al añadir vendors o
+  tipos de evento con accesos no defensivos.
+
+### Targets (funciones puras) y su oráculo
+
+| Target | Entrada fuzzeada | Invariante a verificar |
+| --- | --- | --- |
+| `vendor.get_vendor` / `extract_event_type` / `is_falcon_event` | `Any` (dict, list, `None`, int…) | no lanzan; solo constantes conocidas |
+| `builder.get_additional_fields_dict` | dict con `AdditionalFields` anidado/JSON | no lanza; devuelve `dict` |
+| `builder.hash_str` / `string_hash` | `str` / `Any` | no lanzan; hex de longitud fija |
+| `defender.parse_defender_event` / `falcon.parse_falcon_event` | `event` JSON-like + `evt_type` + ids (`None`/int/str) | no lanzan; el grafo posterior es JSON-serializable |
+| `builder.GraphBuilder.build_cytoscape_elements` | builder poblado por los pasos anteriores | `json.dumps` OK; ids de nodo y arista únicos y disjuntos; toda arista apunta a un nodo existente |
+| `builder.GraphBuilder._plan_clusters` | builder con muchos artefactos/procesos | solo colapsa `group != "process"`; procesos y aristas `Spawns` permanecen |
+| `datasets._parse_csv_rows` / `_parse_json_rows` / `_detect_encoding_and_check_size` | `bytes` arbitrarios | solo `HTTPException` 400/413, nunca otra excepción |
+
+### Estrategias de Hypothesis (compartidas)
+
+`backend/tests/strategies.py`:
+
+- `json_value`: `st.recursive` con `none`/`bool`/`int`/`float`/`text` + listas y
+  dicts anidados (para `event`).
+- `event_dict`: `st.dictionaries(st.text(), json_value, max_size=30)`.
+- `event_type`: mezcla de `st.sampled_from(KNOWN_*_TYPES)` (para ejercitar las
+  ramas reales) + `st.text()` (robustez ante desconocidos).
+- `element_id`: `st.one_of(st.none(), st.text(), st.integers())`.
+- Bytes: `st.binary(max_size=4096)` más prefijos que fuercen BOM, latin-1 y JSON
+  roto.
+
+### Oráculos y estructura de tests
+
+- Helper reutilizable `_assert_graph_invariants(payload)` (ids únicos, disjuntos,
+  sin aristas colgantes, clustering no destructivo).
+- Archivos nuevos:
+  - `backend/tests/strategies.py`
+  - `backend/tests/test_fuzz_vendor.py`
+  - `backend/tests/test_fuzz_builder.py`
+  - `backend/tests/test_fuzz_defender.py`
+  - `backend/tests/test_fuzz_falcon.py`
+  - `backend/tests/test_fuzz_upload.py`
+
+### Integración y CI
+
+- Añadir `hypothesis` a `backend/requirements-dev.txt` (no a runtime).
+- Perfil determinista en `backend/tests/conftest.py` para evitar flakiness:
+  `max_examples=150`, `deadline=None`, `derandomize=True`, y desactivar los health
+  checks `too_slow`/`data_too_large`.
+- Hypothesis se integra con pytest; no hay conflicto con `ruff` (los decoradores
+  `@given`/`@settings` no son `B008`).
+
+### Orden de implementación
+
+1. `strategies.py` + helper de invariantes.
+2. Fuzz de `vendor.py` y `builder.py` (targets más simples).
+3. Fuzz de `parse_defender_event` / `parse_falcon_event` + invariantes del grafo.
+4. Fuzz de helpers de `datasets.py` (bytes).
+5. `requirements-dev.txt` + perfil `ci` en `conftest.py`.
+6. Arreglar los bugs que afloren + test de regresión puntual por cada uno.
+7. Docs (`AGENTS.md` → Testing) y tildar la línea del `TODO`.
+
+---
+
 ## Pendiente / ideas siguientes (fuera del punto 3)
 
 - [ ] **Timeline / vista cronológica** con reproducción de la secuencia de eventos.
@@ -212,7 +298,8 @@ nodo para colorearlo.
 - [ ] **Exportar** grafo a PNG/SVG/JSON y lista filtrada a CSV.
 - [ ] **Nuevos vendors**: Sysmon, SentinelOne, Carbon Black, auditd.
 - [ ] **Tests de frontend** (Vitest + Testing Library) y E2E (Playwright).
-- [ ] **Fuzzing de parsers** (Hypothesis).
+- [ ] **Fuzzing de parsers** (Hypothesis) — plan detallado en la sección
+      homónima de arriba.
 - [ ] **`/api/health`** y métricas básicas.
 - [ ] **Audit log** de acciones (login, upload, delete).
 - [ ] (Opcional) **Rate limiting** en login y cabeceras de seguridad.
