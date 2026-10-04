@@ -259,48 +259,19 @@ class GraphBuilder:
         _append_raw_log(edge, raw_event)
         self.edges_list.append(edge)
 
-    def _closed_descendants(self, hub_id, children, parents, already_collapsed):
-        """Return the descendants of ``hub_id`` that only it can reach.
-
-        A node is "exclusively owned" when every one of its parents is the hub or
-        another owned node, and every one of its children is owned or the hub.
-        The second condition matters because collapsing a node also removes its
-        edges: keeping a node whose child would stay behind would leave a
-        dangling edge. Starting from the whole reachable set and dropping nodes
-        that fail either condition (to a fixpoint) yields the largest safe set.
-        """
-        reachable = set()
-        queue = [hub_id]
-        while queue:
-            for edge in children.get(queue.pop(), []):
-                target = edge["target"]
-                if target == hub_id or target in already_collapsed or target in reachable:
-                    continue
-                reachable.add(target)
-                queue.append(target)
-
-        changed = True
-        while changed:
-            changed = False
-            for node_id in list(reachable):
-                if parents.get(node_id, set()) - reachable - {hub_id}:
-                    reachable.discard(node_id)
-                    changed = True
-                    continue
-                if any(
-                    edge["target"] not in reachable and edge["target"] != hub_id
-                    for edge in children.get(node_id, [])
-                ):
-                    reachable.discard(node_id)
-                    changed = True
-        return reachable
-
     def _plan_clusters(self):
-        """Collapse fan-out hubs into placeholders, returning the side maps.
+        """Collapse a process hub's exclusively-owned *artifact* children.
+
+        Only non-process nodes are ever collapsed. Processes are the graph's
+        central actors: their ``Spawns`` edges are what keep the graph connected,
+        so a hub's process children always stay in the payload. Only the fan-out
+        of artifact leaves (files, registry, network, command lines, modules,
+        alerts, …) is hidden behind a placeholder. Artifacts never have outgoing
+        edges in this model, so removing an exclusive one can never leave a
+        dangling edge.
 
         Returns ``(collapsed_node_ids, collapsed_edge_ids, clusters)`` where
         ``clusters`` maps a placeholder id to the elements needed to expand it.
-        Everything stays server-side until the browser asks for a cluster.
         """
         threshold = _cluster_min_children()
         if threshold <= 0:
@@ -321,35 +292,41 @@ class GraphBuilder:
         clusters = {}
         internal_keys = ("raw_logs", "_search_text")
 
-        # Biggest fan-out first, so nested hubs are collapsed only once.
-        for hub_id, hub_edges in sorted(
-            children.items(), key=lambda item: len(item[1]), reverse=True
-        ):
-            if hub_id in collapsed_nodes or len(hub_edges) <= threshold:
+        for hub_id, hub_edges in children.items():
+            hub = self.nodes_dict.get(hub_id)
+            if not hub or hub.get("group") != "process":
                 continue
 
-            members = self._closed_descendants(hub_id, children, parents, collapsed_nodes)
+            # Exclusively-owned artifact children (their only parent is this hub).
+            members = [
+                edge["target"]
+                for edge in hub_edges
+                if edge["target"] not in collapsed_nodes
+                and self.nodes_dict.get(edge["target"], {}).get("group") != "process"
+                and parents.get(edge["target"]) == {hub_id}
+            ]
             if len(members) < threshold:
                 continue
 
+            member_set = set(members)
             member_edges = [
                 edge
                 for edge in self.edges_list
-                if edge["source"] in members or edge["target"] in members
+                if edge["source"] == hub_id and edge["target"] in member_set
             ]
 
-            hub_label = (self.nodes_dict.get(hub_id, {}).get("label") or hub_id).split("\n")[0]
+            hub_label = (hub.get("label") or hub_id).split("\n")[0]
             cluster_id = f"cluster_{hub_id}"
             cluster_node = {
                 "id": cluster_id,
-                "label": f"+{len(members)}",
+                "label": f"+{len(member_set)}",
                 "group": "cluster",
                 "title": (
-                    f"{len(members)} exclusively-owned descendants of {hub_label} "
+                    f"{len(member_set)} exclusively-owned artifacts of {hub_label} "
                     "are collapsed.\nExpand the cluster to load them on demand."
                 ),
                 "isCluster": True,
-                "clusterCount": len(members),
+                "clusterCount": len(member_set),
                 "parentId": hub_id,
             }
             cluster_edge = {
@@ -369,14 +346,13 @@ class GraphBuilder:
                 "nodes": [
                     {"data": {k: v for k, v in self.nodes_dict[node_id].items() if k not in internal_keys}}
                     for node_id in members
-                    if node_id in self.nodes_dict
                 ],
                 "edges": [
                     {"data": {k: v for k, v in edge.items() if k not in internal_keys}}
                     for edge in member_edges
                 ],
             }
-            collapsed_nodes.update(members)
+            collapsed_nodes.update(member_set)
             collapsed_edges.update(edge["id"] for edge in member_edges)
 
         return collapsed_nodes, collapsed_edges, clusters

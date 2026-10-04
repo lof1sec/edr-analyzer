@@ -70,6 +70,27 @@ def test_raw_logs_are_capped_but_total_is_kept():
     assert node["data"]["raw_logs_total"] == total
 
 
+def test_process_children_are_never_collapsed(monkeypatch):
+    """Processes are the graph backbone; a hub's process children stay visible."""
+    monkeypatch.setenv("CLUSTER_MIN_CHILDREN", "2")
+    builder = GraphBuilder()
+    builder.get_or_create_process_node("hub", "hub.exe")
+    for i in range(3):
+        builder.get_or_create_process_node(f"child{i}", "child.exe")
+        builder.add_edge("hub", f"child{i}", "Spawns", "#ff4d4d", "ProcessCreated")
+
+    payload = builder.build_cytoscape_elements()
+
+    assert payload["clusters"] == {}
+    node_ids = {node["data"]["id"] for node in payload["elements"]["nodes"]}
+    assert {"hub", "child0", "child1", "child2"} <= node_ids
+    edge_pairs = {
+        (edge["data"]["source"], edge["data"]["target"])
+        for edge in payload["elements"]["edges"]
+    }
+    assert ("hub", "child0") in edge_pairs
+
+
 def test_shared_descendants_are_not_collapsed(monkeypatch):
     """A child reachable from outside the hub must stay in the payload."""
     monkeypatch.setenv("CLUSTER_MIN_CHILDREN", "2")
@@ -91,6 +112,8 @@ def test_shared_descendants_are_not_collapsed(monkeypatch):
     cluster = next(iter(payload["clusters"].values()))
     collapsed_ids = {node["data"]["id"] for node in cluster["nodes"]}
     assert collapsed_ids == {"leaf1.dll", "leaf2.dll"}
+    # The shared artifact and every process node stay in the payload.
+    assert "hub" in node_ids and "other" in node_ids
 
 
 def test_search_index_covers_events_beyond_the_raw_log_cap():

@@ -29,9 +29,10 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
 - **Multiple layouts:** Force-directed, tree and node-centric (concentric).
 - **Saved layout:** your node arrangement is persisted per dataset and restored
   when you reopen the graph ("Reset layout" regenerates it).
-- **Clustering & lazy loading:** fan-out hubs collapse their exclusively-owned
-  descendants into a `+N` placeholder that loads on demand, and any node's
-  neighbourhood can be pulled in on request — so large graphs stay responsive.
+- **Clustering & lazy loading:** a process that fans out to many exclusively-owned
+  artifacts (files, registry, network, command lines…) collapses them into a `+N`
+  placeholder that loads on demand. Processes and their `Spawns` edges stay
+  visible, so the graph remains connected.
 - **Deep inspection:** Click any node or edge to inspect its metadata and the
   raw log events behind it, with copy-to-clipboard.
 - **Schema migrations:** Alembic runs automatically on backend startup.
@@ -62,8 +63,9 @@ products. Events that match neither marker are still stored (event type
 3. **Build graph** — `GET /api/graph/{id}` loads the dataset's events in a
    deterministic order and feeds them to `GraphBuilder` plus the per-vendor
    parsers, producing Cytoscape `{ nodes, edges, unmapped_events }`.
-   Exclusively-owned fan-out subtrees are collapsed into `+N` cluster
-   placeholders and expanded on demand (`/api/graph/{id}/clusters/…`).
+   A process hub's exclusively-owned artifact children are collapsed into `+N`
+   cluster placeholders and expanded on demand
+   (`/api/graph/{id}/clusters/…`); process nodes are never collapsed.
 4. **Visualise** — the React frontend renders the graph and applies all
    filtering client-side.
 

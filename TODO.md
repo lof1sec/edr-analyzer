@@ -31,11 +31,17 @@ carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
 
 ### 3.1 Clustering (colapsar subárboles grandes) — ✅ HECHO
 
-- [x] **Detección de hubs y colapso**: en `GraphBuilder`, un nodo con más de
-      `CLUSTER_MIN_CHILDREN` descendientes *exclusivos* los agrupa en un nodo
-      placeholder. Solo se colapsan conjuntos cerrados (todas las aristas de ida
-      y vuelta dentro del conjunto), así que nunca queda una arista colgando ni se
-      oculta un nodo compartido. `backend/app/parsers/builder.py`.
+- [x] **Detección de hubs y colapso (solo artefactos)**: en `GraphBuilder`, un
+      proceso con más de `CLUSTER_MIN_CHILDREN` hijos **artefacto** *exclusivos*
+      (un solo padre, `group != "process"`) los agrupa en un placeholder. **Los
+      procesos y sus aristas `Spawns` nunca se colapsan**, así que el grafo sigue
+      conectado; los artefactos son hojas, así que quitar uno exclusivo nunca deja
+      una arista colgando, y un artefacto compartido permanece.
+      `backend/app/parsers/builder.py`.
+- [x] **Fix de conectividad** (tras detectarse en pruebas): la versión inicial
+      colapsaba subárboles enteros, incluidos procesos, y al desaparecer las
+      aristas `Spawns` el grafo parecía desconectado. Ahora solo se colapsan
+      artefactos hoja.
 - [x] **Payload ligero**: los nodos colapsados no viajan en `elements`; el
       placeholder lleva `isCluster`, `clusterCount` y `parentId`. Los `raw_logs` y
       el `search_index` se siguen construyendo para poder expandir y buscar.
@@ -46,8 +52,8 @@ carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
       `frontend/src/components/cytoscapeStyles.js`, `GraphView.jsx`.
 - [x] **Posicionado al expandir**: los nodos nuevos se disponen en anillo
       alrededor del hub; no se relanza el layout completo.
-- [x] **Tests**: colapso y expansión de un hub; un descendiente compartido **no**
-      se colapsa.
+- [x] **Tests**: colapso y expansión de artefactos de un hub; un artefacto
+      compartido **no** se colapsa; los procesos **nunca** se colapsan.
 
 ### 3.3 Vecinos lazy / paginación — 🚧 PARCIAL
 

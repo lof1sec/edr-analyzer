@@ -136,15 +136,17 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    environment credentials are set. Existing accounts are never overwritten, so a
    password changed in-app survives restarts.
 10. **Clustering and saved layouts are non-destructive and dataset-scoped.**
-    Clustering only collapses *exclusively-owned* descendants (all in/out edges
-    stay inside the set), so a shared node is never hidden and no edge dangles;
-    the hidden elements plus their search/raw-log entries remain available for
-    on-demand expansion. Saved layouts live in `graph_layouts` (one row per
-    dataset) and are deleted with the dataset.
+    Clustering only collapses a process hub's *exclusively-owned artifact*
+    children (non-`process`, single parent). Processes and their `Spawns` edges
+    are never collapsed, so the graph stays connected; artifacts are leaves, so
+    removing an exclusive one never leaves a dangling edge. A shared artifact
+    stays in the payload, and every hidden element keeps its search/raw-log
+    entries for on-demand expansion. Saved layouts live in `graph_layouts` (one
+    row per dataset) and are deleted with the dataset.
 
 ## Testing
 
-- Backend: `backend/tests/` (68 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (69 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
