@@ -80,3 +80,21 @@ def test_timeline_pagination_and_filters(admin_client):
 
 def test_timeline_for_missing_dataset_returns_404(admin_client):
     assert admin_client.get("/api/graph/999999/timeline").status_code == 404
+
+
+def test_upload_with_non_finite_timestamp_does_not_crash(admin_client):
+    """Regression: ``NaN`` in a JSON export used to break the whole upload."""
+    content = (
+        b'{"ActionType": "FileCreated", "DeviceName": "H1", "Timestamp": NaN, '
+        b'"InitiatingProcessId": "600", "FileName": "x.dll"}\n'
+    )
+    resp = admin_client.post(
+        "/api/datasets/upload",
+        files={"file": ("events.jsonl", io.BytesIO(content), "application/jsonl")},
+    )
+    assert resp.status_code == 200
+    dataset_id = resp.json()["dataset_id"]
+
+    body = admin_client.get(f"/api/graph/{dataset_id}/timeline").json()
+    assert body["total"] == 1
+    assert body["entries"][0]["time_ms"] is None

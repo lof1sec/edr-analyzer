@@ -104,6 +104,25 @@ def test_defender_powershell_command_uses_dark_orange_exec_style():
     assert edge["data"]["color"] == "#c2410c"
 
 
+def test_falcon_registry_numeric_value_does_not_crash():
+    """Regression: a numeric ``RegValueName`` used to hit ``len(int)``."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "RegValueCommit",
+            "ContextProcessId": "900",
+            "RegObjectName": r"\Registry\Machine\Software\X",
+            "RegValueName": 1,
+        },
+        "RegValueCommit", "900", "reg.exe", None, None, None, "H1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    reg_nodes = [n for n in payload["elements"]["nodes"] if n["data"]["group"] == "registry"]
+    assert len(reg_nodes) == 1
+
+
 def test_falcon_command_history_uses_dark_orange_exec_style():
     builder = GraphBuilder()
     parse_falcon_event(

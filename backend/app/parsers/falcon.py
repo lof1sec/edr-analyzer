@@ -339,7 +339,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
 
     elif evt_type in ["AsepValueUpdate", "RegKeyCommit", "RegValueCommit", "RegSystemConfigValueUpdate"]:
         reg_key = as_text(event.get("RegObjectName", ""))
-        reg_value = event.get("RegValueName", "")
+        reg_value = as_text(event.get("RegValueName", ""))
         actor_ident = context_id or source_id
         if actor_ident and reg_key:
             reg_node_id = f"{reg_key}\\{reg_value}" if reg_value else reg_key

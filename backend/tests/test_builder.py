@@ -116,6 +116,24 @@ def test_shared_descendants_are_not_collapsed(monkeypatch):
     assert "hub" in node_ids and "other" in node_ids
 
 
+def test_cluster_does_not_duplicate_repeated_artifact(monkeypatch):
+    """Regression: a hub targeting the same artifact twice duplicated its node."""
+    monkeypatch.setenv("CLUSTER_MIN_CHILDREN", "2")
+    builder = GraphBuilder()
+    builder.get_or_create_process_node("hub", "hub.exe")
+    builder.add_or_update_artifact_node("a.dll", "a.dll", "info", "file")
+    builder.add_or_update_artifact_node("dup.dll", "dup.dll", "info", "file")
+    builder.add_edge("hub", "a.dll", "FileCreated", "#4da6ff", "FileCreated")
+    builder.add_edge("hub", "dup.dll", "FileCreated", "#4da6ff", "FileCreated")
+    builder.add_edge("hub", "dup.dll", "FileDeleted", "#ff4d4d", "FileDeleted")
+
+    payload = builder.build_cytoscape_elements()
+    cluster = next(iter(payload["clusters"].values()))
+    collapsed_ids = [node["data"]["id"] for node in cluster["nodes"]]
+    assert len(collapsed_ids) == len(set(collapsed_ids))
+    assert cluster["node"]["clusterCount"] == len(collapsed_ids) == 2
+
+
 def test_search_index_covers_events_beyond_the_raw_log_cap():
     builder = GraphBuilder()
     total = MAX_RAW_LOGS_PER_ELEMENT + 50

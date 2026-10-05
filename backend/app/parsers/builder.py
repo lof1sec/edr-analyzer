@@ -332,6 +332,10 @@ class GraphBuilder:
                 and self.nodes_dict.get(edge["target"], {}).get("group") != "process"
                 and parents.get(edge["target"]) == {hub_id}
             ]
+            # A single artifact can be the target of several edges from the same
+            # hub; de-duplicate it so it does not inflate the threshold nor appear
+            # twice when the cluster is expanded.
+            members = list(dict.fromkeys(members))
             if len(members) < threshold:
                 continue
 

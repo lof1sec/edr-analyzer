@@ -5,6 +5,7 @@ and format (epoch seconds/milliseconds or ISO-8601), so the timeline relies on a
 single normalised value: epoch milliseconds. Anything that cannot be parsed
 becomes ``None``; the timeline then falls back to insertion order for that event.
 """
+import math
 import re
 from datetime import UTC, datetime
 
@@ -28,6 +29,10 @@ _NUMERIC = re.compile(r"^[+-]?\d+(\.\d+)?$")
 # be milliseconds. Keeps both common epoch units working.
 _MS_THRESHOLD = 1e11
 
+# Reject implausible epochs (after 9999-12-31) so a corrupt value cannot yield a
+# meaningless timestamp.
+_MAX_EPOCH_MS = 253_402_300_799_999
+
 
 def extract_timestamp(event) -> int | None:
     """Return the event time as epoch milliseconds, or ``None`` if unknown."""
@@ -47,13 +52,21 @@ def _parse_timestamp(value) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
-        return _epoch_to_ms(float(value))
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return _epoch_to_ms(number)
     if isinstance(value, str):
         text = value.strip()
         if not text:
             return None
         if _NUMERIC.match(text):
-            return _epoch_to_ms(float(text))
+            try:
+                number = float(text)
+            except (OverflowError, ValueError):
+                return None
+            return _epoch_to_ms(number)
         # ISO 8601 / RFC 3339. ``fromisoformat`` handles "Z" on 3.11+, but
         # normalising it keeps the behaviour explicit across versions.
         iso = text[:-1] + "+00:00" if text.endswith("Z") else text
@@ -68,11 +81,18 @@ def _parse_timestamp(value) -> int | None:
 
 
 def _epoch_to_ms(value: float) -> int | None:
-    if value <= 0:
+    # ``NaN``/``inf`` reach here from JSON exports (Python's ``json`` accepts
+    # ``NaN``/``Infinity``) and from oversized numeric strings; they must not
+    # crash the upload, which extracts a timestamp on every row.
+    if not math.isfinite(value) or value <= 0:
         return None
-    if value > _MS_THRESHOLD:
-        return int(value)
-    return int(value * 1000)
+    try:
+        ms = int(value) if value > _MS_THRESHOLD else int(value * 1000)
+    except (OverflowError, ValueError):
+        return None
+    if ms <= 0 or ms > _MAX_EPOCH_MS:
+        return None
+    return ms
 
 
 def format_timestamp(ms: int | None) -> str | None:

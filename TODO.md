@@ -378,10 +378,67 @@ el grafo.
 
 ---
 
+## Revisión / correcciones (post-revisión) — 🟡 EN CURSO
+
+**Estado:** revisión completa del proyecto. Corregidos los bugs confirmados 1–3
+(crashes y duplicación de datos); el 4 queda pendiente de decisión por su impacto
+en ids/layouts.
+
+### Bugs confirmados y corregidos
+
+- [x] **`extract_timestamp` no era seguro ante `NaN`/`Infinity`/desbordes**
+      (`app/parsers/timestamps.py`). Un JSON con `NaN`/`Infinity` (que
+      `json.loads` acepta) o un número gigante lanzaba `ValueError`/
+      `OverflowError` al extraer el timestamp de **cada fila**, rompiendo el
+      upload completo con 500 y dejando un dataset huérfano. Ahora se valida
+      `math.isfinite` y un rango plausible (≤ 9999-12-31); no finito o fuera de
+      rango → `None`. Regresiones en `test_timestamps.py` y `test_timeline.py`
+      (upload con `NaN`).
+- [x] **`RegValueName` numérico en Falcon crasheaba** (`app/parsers/falcon.py`):
+      `len(raw_reg)` sobre un `int` → `TypeError`. Se aplica `as_text()` como al
+      resto de campos. Regresión en `test_parsers_smoke.py`.
+- [x] **Clusters duplicaban artefactos repetidos** (`_plan_clusters`,
+      `app/parsers/builder.py`): un hub con varias aristas al mismo artefacto
+      generaba `members` con duplicados, inflaba el umbral y producía nodos
+      repetidos al expandir (aunque `clusterCount` los contaba una vez). Se
+      deduplica preservando el orden. Regresión en `test_builder.py`.
+
+### Mejora menor aplicada
+
+- [x] `pool_pre_ping=True` en `create_engine` (`app/database.py`) para evitar
+      conexiones stale tras un reinicio de Postgres.
+
+### Pendiente (requiere decisión)
+
+- [ ] **Id de proceso compuesto por host + PID** (`get_or_create_process_node`).
+      Hoy la clave del nodo es solo `str(pid)`, así que el mismo PID en dos hosts
+      distintos colisiona y se pierde el segundo proceso (habitual en exports
+      multi-host de Defender/Falcon). Componer el id con el hostname cambiaría
+      los ids (invariante 2), invalidaría layouts guardados y obligaría a ajustar
+      `element_ids` de la timeline; conviene planificarlo con migración.
+
+### Recomendaciones no aplicadas (bajo impacto)
+
+- [ ] Extraer la constante `"Unknown"` duplicada en `events.py`/parsers.
+- [ ] JSON leniente: `_parse_json_rows` acepta comas ausentes y basura tras el
+      objeto; valorar modo estricto o contabilizar líneas malformadas.
+- [ ] Cache de grafo por-proceso (`graph_cache`): no se comparte con
+      `--workers N`; documentado, revisar si se escala.
+- [ ] Sin token CSRF (mitigado por allowlist CORS + `SameSite=lax` + httpOnly).
+
+### Testing
+
+- [x] `backend/tests/` pasa a **98 tests** (regresiones de los 3 bugs); `ruff`
+      limpio. Sin cambios de frontend.
+
+---
+
 ## Pendiente / ideas siguientes (fuera del punto 3)
 
 - [x] **Timeline / vista cronológica** con reproducción de la secuencia de
       eventos — hecho (sección homónima de arriba).
+- [~] **Revisión de código / correcciones** — 3 bugs corregidos, 1 pendiente
+      (sección homónima de arriba).
 - [ ] **Mapeo MITRE ATT&CK** por evento (táctica/técnica) y filtro por técnica.
 - [ ] **Detección de patrones sospechosos** (LOLBins, inyección, persistencia) y
       risk score — plan detallado en la sección homónima de arriba.

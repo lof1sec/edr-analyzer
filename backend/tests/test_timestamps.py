@@ -51,3 +51,20 @@ def test_missing_or_invalid_returns_none():
 def test_format_timestamp():
     assert format_timestamp(None) is None
     assert format_timestamp(0) == "1970-01-01T00:00:00+00:00"
+
+
+def test_non_finite_and_overflowing_values_return_none():
+    # These reach ``extract_timestamp`` from real JSON exports (``json`` accepts
+    # ``NaN``/``Infinity``) and from oversized numbers; they must never crash the
+    # upload, which extracts a timestamp on every row.
+    assert extract_timestamp({"timestamp": float("nan")}) is None
+    assert extract_timestamp({"timestamp": float("inf")}) is None
+    assert extract_timestamp({"timestamp": float("-inf")}) is None
+    assert extract_timestamp({"timestamp": 10**400}) is None
+    assert extract_timestamp({"timestamp": "9" * 400}) is None
+
+
+def test_implausible_epoch_is_rejected():
+    # The last millisecond of 9999 is accepted; a value past it is not.
+    assert extract_timestamp({"timestamp": 253402300799999}) == 253402300799999
+    assert extract_timestamp({"timestamp": 253402300800000}) is None
