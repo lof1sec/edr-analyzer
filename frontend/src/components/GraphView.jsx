@@ -864,7 +864,6 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
           stylesheet={styleSheet}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
-          textureOnViewport={true}
           cy={handleCy}
         />
 

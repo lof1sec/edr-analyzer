@@ -196,6 +196,10 @@ Conventional-commit prefixes have been used so far (`security:`, `perf:`,
 
 - `GraphView.jsx` uses `react-cytoscapejs`, which re-runs the layout whenever
   the `layout` prop reference changes — keep it memoised (`useMemo`).
+- Do **not** re-add Cytoscape's `textureOnViewport` / `hideEdgesOnViewport` to
+  `GraphView.jsx`: both make relationship edges invisible until the viewport is
+  invalidated by an interaction (select/pan/zoom), which reads as a rendering
+  bug. Plain canvas rendering keeps edges painted from the first frame.
 - `react-cytoscapejs` calls the `cy` prop on **every** mount/update. Register
   the graph event listeners inside that callback, guarded by instance identity,
   not in a `useEffect`: the effect version can bind to a destroyed instance
