@@ -22,6 +22,10 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Property-based tests run under a deterministic profile so CI stays
+# reproducible and never trips on timing or large-data health checks.
+from hypothesis import HealthCheck, settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -29,6 +33,15 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.routers import graph_cache
 from main import app
+
+settings.register_profile(
+    "ci",
+    max_examples=150,
+    deadline=None,
+    derandomize=True,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+)
+settings.load_profile("ci")
 
 # One shared in-memory database for the whole test session (StaticPool keeps a
 # single connection alive so every session sees the same schema/data).

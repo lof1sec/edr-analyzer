@@ -146,7 +146,7 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 
 ## Testing
 
-- Backend: `backend/tests/` (69 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (81 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
@@ -156,6 +156,13 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   `JSON().with_variant(JSONB, "postgresql")` so the schema also builds on sqlite.
   `conftest.py` sets `SECRET_KEY` so session cookies are valid in tests. Add a
   test when adding an event mapping, endpoint, or touching the payload.
+- Backend property tests (Hypothesis, dev-only, `requirements-dev.txt`):
+  `tests/test_fuzz_*.py` fuzz the pure parsers and upload helpers; shared
+  strategies and the graph invariants live in `tests/strategies.py`. `conftest.py`
+  loads a deterministic `ci` profile (`max_examples=150`, `deadline=None`,
+  `derandomize=True`) so CI stays reproducible. When a parser reads a field that
+  may not be text, wrap it with `builder.as_text()` and keep
+  `assert_graph_invariants` green.
 - Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
   Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
   in defaults are intentionally exempt via `B008`.

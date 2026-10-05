@@ -1,7 +1,7 @@
 import json
 import textwrap
 
-from app.parsers.builder import GraphBuilder, get_additional_fields_dict, hash_str
+from app.parsers.builder import GraphBuilder, as_text, get_additional_fields_dict, hash_str
 
 
 def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
@@ -23,7 +23,7 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
 
             if cmdline and cmdline != "No CommandLine":
                 cmd_node_id = f"cmd_{target_id}"
-                wrapped_cmd = textwrap.fill(cmdline, width=60)
+                wrapped_cmd = textwrap.fill(as_text(cmdline), width=60)
                 builder.add_or_update_artifact_node(
                     cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw Command Line:\n{cmdline}", "commandline", event)
                 builder.add_edge(
@@ -43,7 +43,7 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             builder.get_or_create_process_node(
                 actor_id, actor_name, username, hostname, evt_type, event)
             cmd_node_id = f"pscmd_{actor_id}_{hash_str(ps_command)}"
-            wrapped_cmd = textwrap.fill(ps_command, width=60)
+            wrapped_cmd = textwrap.fill(as_text(ps_command), width=60)
             builder.add_or_update_artifact_node(cmd_node_id,
                                                 wrapped_cmd,
                                                 f"[{evt_type}]\nRaw PowerShell Command:\n{ps_command}",
@@ -67,7 +67,7 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             builder.get_or_create_process_node(
                 actor_id, actor_name, username, hostname, evt_type, event)
             clr_node_id = f"clr_{actor_id}_{hash_str(module_name)}"
-            display_clr = f"Unbacked CLR\n{module_name[:30]}"
+            display_clr = f"Unbacked CLR\n{as_text(module_name)[:30]}"
             clr_info = f"[{evt_type}]\nAssembly / Module Name: {module_name}\nDetails:\n{event.get('AdditionalFields', '')}"
             builder.add_or_update_artifact_node(
                 clr_node_id, display_clr, clr_info, "module", event)
@@ -82,7 +82,7 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
 
     elif evt_type == "LdapSearch":
         add_fields = get_additional_fields_dict(event)
-        search_filter = add_fields.get("SearchFilter", "Unknown Filter")
+        search_filter = as_text(add_fields.get("SearchFilter", "Unknown Filter"))
         attributes = str(add_fields.get("AttributeList", ""))
         if actor_id:
             builder.get_or_create_process_node(
@@ -172,8 +172,9 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         if actor_id and pipe_name:
             builder.get_or_create_process_node(
                 actor_id, actor_name, username, hostname, evt_type, event)
-            display_pipe = pipe_name.split(
-                '\\')[-1] if '\\' in pipe_name else pipe_name
+            pipe_name_text = as_text(pipe_name)
+            display_pipe = pipe_name_text.split(
+                '\\')[-1] if '\\' in pipe_name_text else pipe_name_text
             if len(display_pipe) > 50:
                 display_pipe = display_pipe[:50] + "..."
             pipe_info = f"[{evt_type}]\nPipe Name: {pipe_name}\nOperation: {file_op}"
@@ -215,9 +216,10 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         if actor_id and launched_url:
             builder.get_or_create_process_node(
                 actor_id, actor_name, username, hostname, evt_type, event)
-            url_node_id = f"url_{hash_str(launched_url)}"
-            display_url = launched_url[:50] + \
-                "..." if len(launched_url) > 50 else launched_url
+            url_text = as_text(launched_url)
+            url_node_id = f"url_{hash_str(url_text)}"
+            display_url = url_text[:50] + \
+                "..." if len(url_text) > 50 else url_text
             url_info = f"[{evt_type}]\nLaunched URL/URI:\n{launched_url}"
             builder.add_or_update_artifact_node(
                 url_node_id, display_url, url_info, "network", event)
@@ -241,7 +243,7 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         builder.get_or_create_process_node(
             av_actor, av_actor_name, username, hostname, evt_type, event)
         alert_node_id = f"av_alert_{file_name}_{sha1}"
-        display_name = f"⚠️ AV ALERT\n{file_name[:25]}"
+        display_name = f"⚠️ AV ALERT\n{as_text(file_name)[:25]}"
         alert_info = f"[{evt_type}]\nTarget Payload: {file_name}\nSHA1: {sha1}\nDetails: {add_fields_raw}"
         builder.add_or_update_artifact_node(
             alert_node_id, display_name, alert_info, "alert", event)
@@ -255,8 +257,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             raw_event=event)
 
     elif evt_type in ["FileCreated", "FileModified", "FileDeleted", "FileRenamed", "ShellLinkCreateFileEvent"]:
-        folder_path = event.get("FolderPath", "")
-        file_name = event.get("FileName", "")
+        folder_path = as_text(event.get("FolderPath", ""))
+        file_name = as_text(event.get("FileName", ""))
         full_path = folder_path if folder_path else file_name
         if actor_id and full_path:
             builder.get_or_create_process_node(
@@ -284,8 +286,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
                 raw_event=event)
 
     elif evt_type in ["ImageLoaded", "DriverLoad"]:
-        dll_path = event.get("FolderPath", "")
-        dll_name = event.get("FileName", "")
+        dll_path = as_text(event.get("FolderPath", ""))
+        dll_name = as_text(event.get("FileName", ""))
         if actor_id and dll_path:
             short_dll = dll_name if dll_name else dll_path.split('\\')[-1]
             builder.get_or_create_process_node(
@@ -301,10 +303,10 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
                 raw_event=event)
 
     elif evt_type in ["RegistryKeyCreated", "RegistryValueCreated", "RegistryValueSet", "RegistryKeyDeleted", "RegistryValueDeleted"]:
-        reg_key = event.get("RegistryKey") or event.get(
-            "PreviousRegistryKey", "")
-        reg_value = event.get("RegistryValueName") or event.get(
-            "PreviousRegistryValueName", "")
+        reg_key = as_text(event.get("RegistryKey") or event.get(
+            "PreviousRegistryKey", ""))
+        reg_value = as_text(event.get("RegistryValueName") or event.get(
+            "PreviousRegistryValueName", ""))
         reg_data = event.get("RegistryValueData", "")
         if actor_id and reg_key:
             reg_node_id = f"{reg_key}\\{reg_value}" if reg_value else reg_key

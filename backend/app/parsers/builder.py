@@ -20,16 +20,26 @@ def get_additional_fields_dict(event_data):
     return {}
 
 @functools.lru_cache(maxsize=8192)
-def hash_str(val: str) -> str:
+def _hash_str(text: str) -> str:
+    return hashlib.md5(text.encode("utf-8")).hexdigest()[:10]
+
+
+def hash_str(val) -> str:
     """Short, stable digest used to build labels/ids in the graph payload.
 
     The digest is truncated only for readability; determinism across processes
-    is what matters here, not cryptographic strength.
+    is what matters here, not cryptographic strength. ``val`` is coerced with
+    ``str`` *before* the cached lookup so callers may pass numbers, ``None`` or
+    even unhashable JSON values without a ``TypeError``.
     """
-    return hashlib.md5(str(val).encode("utf-8")).hexdigest()[:10]
+    return _hash_str(str(val))
 
 
 @functools.lru_cache(maxsize=65536)
+def _string_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
 def string_hash(val) -> str:
     """Stable identifier digest for graph element ids.
 
@@ -37,9 +47,26 @@ def string_hash(val) -> str:
     (PYTHONHASHSEED). Ids built from it changed on every backend restart,
     breaking references and making the graph non-reproducible. A sha1 digest is
     fixed across processes; 16 hex chars keeps collisions negligible for
-    realistic datasets.
+    realistic datasets. As with :func:`hash_str`, ``val`` is stringified before
+    the cached lookup so unhashable values are safe.
     """
-    return hashlib.sha1(str(val).encode("utf-8")).hexdigest()[:16]
+    return _string_hash(str(val))
+
+
+def as_text(value) -> str:
+    """Coerce a possibly non-string event field to text.
+
+    CSV exports are always strings, but JSON exports can deliver a field as a
+    number, boolean or ``None`` while the graph code assumes text. ``None``
+    becomes an empty string (so ``if value:`` guards still skip it) and every
+    other value is stringified, guaranteeing slices and string methods (``split``,
+    ``replace`` …) never raise on untrusted input.
+    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return str(value)
 
 
 # Raw events are attached to graph elements so the details pane can show

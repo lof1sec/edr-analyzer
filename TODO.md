@@ -199,9 +199,10 @@ nodo para colorearlo.
 
 ---
 
-## Fuzzing de parsers con Hypothesis
+## Fuzzing de parsers con Hypothesis — ✅ HECHO
 
-**Estado:** planificado (sin implementar).
+**Estado:** implementado. Suite de tests *property-based* añadida; el fuzzing ya
+destapó y arregló un bug real de codificación (ver "Resultado").
 
 **Objetivo:** garantizar con tests *property-based* que el pipeline de parsing
 (puro, sin HTTP ni DB) es robusto ante cualquier entrada y que los invariantes del
@@ -273,15 +274,48 @@ grafo se mantienen siempre. Busca dos propiedades:
 - Hypothesis se integra con pytest; no hay conflicto con `ruff` (los decoradores
   `@given`/`@settings` no son `B008`).
 
-### Orden de implementación
+### Checklist (orden aplicado)
 
-1. `strategies.py` + helper de invariantes.
-2. Fuzz de `vendor.py` y `builder.py` (targets más simples).
-3. Fuzz de `parse_defender_event` / `parse_falcon_event` + invariantes del grafo.
-4. Fuzz de helpers de `datasets.py` (bytes).
-5. `requirements-dev.txt` + perfil `ci` en `conftest.py`.
-6. Arreglar los bugs que afloren + test de regresión puntual por cada uno.
-7. Docs (`AGENTS.md` → Testing) y tildar la línea del `TODO`.
+- [x] `strategies.py` (`json_value`, `event_dict`, `graph_id`/`optional_id`,
+      `event_type_strategy`, `DEFENDER_/FALCON_EVENT_TYPES`) + helper
+      `assert_graph_invariants`.
+- [x] Fuzz de `vendor.py` y `builder.py` (hashes con valores no hashables,
+      `get_additional_fields_dict`, invariantes de `build_cytoscape_elements`).
+- [x] Fuzz de `parse_defender_event` / `parse_falcon_event` + invariantes del grafo.
+- [x] Fuzz de helpers de `datasets.py` (bytes) + 3 regresiones dirigidas.
+- [x] `hypothesis` en `requirements-dev.txt` + perfil `ci` en `conftest.py`.
+- [x] Endurecer el pipeline ante lo que afloró (ver abajo).
+- [x] Docs (`AGENTS.md` → Testing) y tildar la línea del `TODO`.
+
+### Resultado
+
+`python -m pytest -q` → **81 tests OK** (antes 69) y `ruff check` limpio.
+
+Bugs/endurecimientos que el fuzzing motivó:
+
+- **UTF-8 truncado mal detectado** (bug encontrado por Hypothesis con `b"\xc2"`):
+  `_detect_encoding_and_check_size` no finalizaba el decoder incremental, así que
+  una secuencia multibyte incompleta al final del fichero se daba por válida como
+  `utf-8-sig` y reventaba al decodificar. Ahora se hace
+  `decoder.decode(b"", final=True)` y se cae a latin-1. Regresión en
+  `test_fuzz_upload.py`.
+- **`hash_str` / `string_hash`** toleran valores no hashables (dicts/listas):
+  coercionan a `str` *antes* del `lru_cache`.
+- **Parsers**: los campos de evento pasan por `as_text()` allí donde se usan como
+  texto (`.split`, `.replace`, `textwrap.fill`, slicing), de modo que un campo
+  `None`/número/lista no lanza.
+- **`build_cytoscape_elements` / `extract_event_type`**: tipo de retorno siempre
+  serializable / texto.
+- **Subida**: `csv.Error` (campo > `field_size_limit`) y `RecursionError` (JSON
+  muy anidado) se traducen a 400; `stream.detach()` tolera streams ya cerrados.
+
+### Desviaciones del plan original
+
+- El helper se llama `assert_graph_invariants` (no `_assert_graph_invariants`).
+- Los ids usan `graph_id`/`optional_id`: incluyen enteros y `None`, y excluyen el
+  prefijo `edge_` (namespace reservado a las aristas).
+- Bytes `st.binary(max_size=2048)` (suficiente; el campo gigante de CSV y el JSON
+  profundamente anidado se cubren con regresiones dirigidas).
 
 ---
 
@@ -298,8 +332,7 @@ grafo se mantienen siempre. Busca dos propiedades:
 - [ ] **Exportar** grafo a PNG/SVG/JSON y lista filtrada a CSV.
 - [ ] **Nuevos vendors**: Sysmon, SentinelOne, Carbon Black, auditd.
 - [ ] **Tests de frontend** (Vitest + Testing Library) y E2E (Playwright).
-- [ ] **Fuzzing de parsers** (Hypothesis) — plan detallado en la sección
-      homónima de arriba.
+- [x] **Fuzzing de parsers** (Hypothesis) — hecho (sección homónima de arriba).
 - [ ] **`/api/health`** y métricas básicas.
 - [ ] **Audit log** de acciones (login, upload, delete).
 - [ ] (Opcional) **Rate limiting** en login y cabeceras de seguridad.

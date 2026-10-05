@@ -1,6 +1,6 @@
 import textwrap
 
-from app.parsers.builder import GraphBuilder, hash_str, string_hash
+from app.parsers.builder import GraphBuilder, as_text, hash_str, string_hash
 
 
 def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
@@ -11,8 +11,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
 
     if evt_type == "ProcessRollup2":
         cmdline = event.get("CommandLine", "No CommandLine")
-        image_file = event.get("ImageFileName",
-                               "Unknown Process").split('\\')[-1]
+        image_file = as_text(event.get("ImageFileName",
+                               "Unknown Process")).split('\\')[-1]
 
         if parent_id and target_id:
             builder.get_or_create_process_node(
@@ -47,7 +47,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
 
             if cmdline and cmdline != "No CommandLine":
                 cmd_node_id = f"cmd_{target_id}"
-                wrapped_cmd = textwrap.fill(cmdline, width=60)
+                wrapped_cmd = textwrap.fill(as_text(cmdline), width=60)
 
                 builder.add_or_update_artifact_node(
                     cmd_node_id, wrapped_cmd, f"[{evt_type}]\nRaw Command Line:\n{cmdline}", "commandline", event)
@@ -61,7 +61,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                     raw_event=event)
 
     elif evt_type == "ProcessAncestryInformation":
-        base_file = event.get("BaseFileName", "").split('\\')[-1]
+        base_file = as_text(event.get("BaseFileName", "")).split('\\')[-1]
         p_name = event.get("ParentBaseFileName", "")
         gp_name = event.get("GrandParentBaseFileName", "")
         ggp_name = event.get("GreatGrandParentBaseFileName", "")
@@ -112,7 +112,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             alert_node_id = f"alert_{actor_ident}_{event.get('timestamp')}"
             display_label = f"ALERT: {detect_name}\nSeverity: {severity}"
 
-            wrapped_desc = textwrap.fill(description, width=60)
+            wrapped_desc = textwrap.fill(as_text(description), width=60)
             full_info = (f"[{evt_type}]\nDetection: {detect_name}\nSeverity: {severity}\n"
                          f"Tactic: {tactic}\nTechnique: {technique}\n\nDescription:\n{wrapped_desc}")
 
@@ -173,7 +173,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         "SuspiciousEseFileWritten", "SuspiciousPeFileWritten", "TarFileWritten", "TiffFileWritten", "UnixFileWritten", "VdiFileWritten", "VmdkFileWritten",
         "XarFileWritten", "XzFileWritten", "Yz1FileWritten", "ZipFileWritten", "ZpaqFileWritten", "ZstdFileWritten"
     ]:
-        file_name = event.get("TargetFileName") or event.get("FileName", "")
+        file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
 
         if context_id and file_name:
             builder.get_or_create_process_node(
@@ -207,7 +207,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 raw_event=event)
 
     elif evt_type == "ExecutableDeleted":
-        file_name = event.get("TargetFileName") or event.get("FileName", "")
+        file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
         actor_ident = context_id or source_id
         if actor_ident and file_name:
             builder.get_or_create_process_node(
@@ -242,7 +242,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             builder.get_or_create_process_node(
                 actor_ident, actor_name, username, hostname, evt_type, event)
 
-            symlink = event.get("SymbolicLinkName", "")
+            symlink = as_text(event.get("SymbolicLinkName", ""))
             target = event.get("SymbolicLinkTarget", "")
             tactic = event.get("Tactic", "N/A")
             technique = event.get("Technique", "N/A")
@@ -277,8 +277,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             technique = event.get("Technique", "N/A")
 
             if evt_type == "ScheduledTaskModified":
-                task_name = event.get("TaskName", "Unknown_Task")
-                task_xml = event.get("TaskXml", "")
+                task_name = as_text(event.get("TaskName", "Unknown_Task"))
+                task_xml = as_text(event.get("TaskXml", ""))
                 node_id = f"task_{string_hash(task_name)}"
                 clean_task_name = task_name.replace('\\', '/').split('/')[-1]
                 display_label = f"Task:\n{clean_task_name}"
@@ -295,7 +295,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                     raw_event=event)
 
             elif evt_type in ["FirewallSetRule", "FirewallDeleteRule"]:
-                rule_id = event.get("FirewallRuleId", "Unknown_Rule")
+                rule_id = as_text(event.get("FirewallRuleId", "Unknown_Rule"))
                 rule_details = event.get("FirewallRule", "")
                 node_id = f"fw_{string_hash(rule_id)}"
                 display_label = f"FW Rule:\n{rule_id[:30]}"
@@ -315,7 +315,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                     raw_event=event)
 
     elif evt_type == "DriverLoad":
-        driver_path = event.get("ImageFileName", "")
+        driver_path = as_text(event.get("ImageFileName", ""))
         actor_ident = context_id or source_id
         if actor_ident and driver_path:
             short_driver = driver_path.split('\\')[-1]
@@ -338,7 +338,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 raw_event=event)
 
     elif evt_type in ["AsepValueUpdate", "RegKeyCommit", "RegValueCommit", "RegSystemConfigValueUpdate"]:
-        reg_key = event.get("RegObjectName", "")
+        reg_key = as_text(event.get("RegObjectName", ""))
         reg_value = event.get("RegValueName", "")
         actor_ident = context_id or source_id
         if actor_ident and reg_key:
@@ -430,7 +430,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         technique = event.get("Technique", "N/A")
 
         if evt_type == "NeighborListIP4":
-            neighbors = event.get("NeighborList", "").replace('|', ' | ')
+            neighbors = as_text(event.get("NeighborList", "")).replace('|', ' | ')
             info = f"[{evt_type}]\nARP/Neighbor Data:\n{neighbors}\nTactic: {tactic}\nTechnique: {technique}"
             builder.add_or_update_artifact_node(
                 node_id, "ARP Neighbor List", info, "network", event)
@@ -459,7 +459,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 raw_event=event)
 
         elif evt_type == "ModuleCertificateInfo2":
-            sha256 = event.get("SHA256HashData", "")
+            sha256 = as_text(event.get("SHA256HashData", ""))
             flags = event.get("AuthenticodeSignatureFlags", "")
             info = f"[{evt_type}]\nSHA256: {sha256}\nSignature Flags: {flags}"
             builder.add_or_update_artifact_node(
@@ -489,7 +489,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 raw_event=event)
 
     elif evt_type == "CommandHistory":
-        cmd_history = event.get("CommandHistory", "")
+        cmd_history = as_text(event.get("CommandHistory", ""))
         actor_ident = target_id or context_id
         if actor_ident and cmd_history:
             builder.get_or_create_process_node(

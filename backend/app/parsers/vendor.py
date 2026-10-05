@@ -26,14 +26,19 @@ def get_vendor(event: Any) -> str:
 
 
 def extract_event_type(event: Any, default: str = "Unknown") -> str:
-    """Return the event type, regardless of which EDR product produced it."""
+    """Return the event type, regardless of which EDR product produced it.
+
+    The marker value is always returned as text: a JSON export may carry it as a
+    number, and the result is stored in a string database column.
+    """
     if not isinstance(event, dict):
         return default
-    if FALCON_EVENT_TYPE_FIELD in event:
-        return event.get(FALCON_EVENT_TYPE_FIELD) or default
-    if DEFENDER_EVENT_TYPE_FIELD in event:
-        return event.get(DEFENDER_EVENT_TYPE_FIELD) or default
-    return default
+    value = event.get(FALCON_EVENT_TYPE_FIELD)
+    if value is None:
+        value = event.get(DEFENDER_EVENT_TYPE_FIELD)
+    if value is None or value == "":
+        return default
+    return value if isinstance(value, str) else str(value)
 
 
 def is_falcon_event(event: Any) -> bool:
