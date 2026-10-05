@@ -33,6 +33,10 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
   artifacts (files, registry, network, command lines…) collapses them into a `+N`
   placeholder that loads on demand. Processes and their `Spawns` edges stay
   visible, so the graph remains connected.
+- **Timeline & playback:** a chronological view of the dataset's events with
+  play/pause, speed control and a scrubber; clicking an event jumps to the
+  matching element in the graph. Event times are normalised at upload
+  (`event_time`), so events without a timestamp keep insertion order.
 - **Deep inspection:** Click any node or edge to inspect its metadata and the
   raw log events behind it, with copy-to-clipboard.
 - **Schema migrations:** Alembic runs automatically on backend startup.
@@ -66,7 +70,11 @@ products. Events that match neither marker are still stored (event type
    A process hub's exclusively-owned artifact children are collapsed into `+N`
    cluster placeholders and expanded on demand
    (`/api/graph/{id}/clusters/…`); process nodes are never collapsed.
-4. **Visualise** — the React frontend renders the graph and applies all
+4. **Timeline** — `GET /api/graph/{id}/timeline` returns the dataset's events
+   ordered by their normalised `event_time` (paginated and filterable), and the
+   frontend renders the sequence with playback. Each entry links back to its
+   graph node so a click jumps to it.
+5. **Visualise** — the React frontend renders the graph and applies all
    filtering client-side.
 
 ## Tech Stack
@@ -189,6 +197,7 @@ uvicorn main:app --reload
 | `GET` | `/api/graph/{dataset_id}/search?q=…` | Ids of elements matching the search terms (server-side search) |
 | `GET` | `/api/graph/{dataset_id}/clusters/{cluster_id}` | Hidden elements of a collapsed cluster (on-demand expansion) |
 | `GET` | `/api/graph/{dataset_id}/neighbors?element_id=…&depth=…` | Subgraph within N hops of an element (1–3) |
+| `GET` | `/api/graph/{dataset_id}/timeline?offset=…&limit=…&event_type=…&q=…&from=…&to=…` | Events in chronological order (paginated, compact summaries) |
 | `GET` | `/api/graph/{dataset_id}/layout` | Saved node positions for the dataset |
 | `PUT` | `/api/graph/{dataset_id}/layout` | Persist node positions for the dataset |
 | `GET` | `/` | Liveness/status check |
@@ -212,8 +221,9 @@ python -m pytest -q
 
 The suite covers vendor detection, upload parsing (CSV/JSONL/JSON-array/single
 object, BOM, latin-1, size/parse limits), the graph builder (stable ids, unique
-edge ids, fan-out clustering), saved layouts, on-demand neighbourhoods and
-Falcon/Defender parser smoke tests.
+edge ids, fan-out clustering), saved layouts, on-demand neighbourhoods, the
+chronological timeline, Falcon/Defender parser smoke tests, and Hypothesis
+property tests for the parsers/upload helpers.
 
 ### Database migrations
 
@@ -257,12 +267,14 @@ edr-analyzer/
 │   │   ├── parsers/          # vendor detection + graph construction
 │   │   │   ├── builder.py    # GraphBuilder, stable ids
 │   │   │   ├── defender.py   # Microsoft Defender event mapping
+│   │   │   ├── events.py     # shared per-vendor actor/target extraction
 │   │   │   ├── falcon.py     # CrowdStrike Falcon event mapping
+│   │   │   ├── timestamps.py # event-time normalisation (epoch ms)
 │   │   │   └── vendor.py     # event type / vendor detection
 │   │   ├── routers/
 │   │   │   ├── auth.py       # login / logout / first-run setup + auth guard
 │   │   │   ├── datasets.py   # upload / list / delete
-│   │   │   └── graph.py      # graph generation, clusters, layouts
+│   │   │   └── graph.py      # graph generation, clusters, layouts, timeline
 │   │   ├── database.py       # engine/session (DATABASE_URL)
 │   │   ├── models.py         # Dataset, LogEvent, User, GraphLayout
 │   │   ├── security.py       # password hashing (Argon2id)
@@ -277,7 +289,7 @@ edr-analyzer/
 ├── frontend/
 │   ├── src/
 │   │   ├── api/client.js     # single place for API calls
-│   │   ├── components/       # GraphView, Sidebar, AuthPage, Cytoscape styles
+│   │   ├── components/       # GraphView, TimelineView, Sidebar, AuthPage, styles
 │   │   ├── hooks/            # useDebouncedValue
 │   │   ├── App.jsx
 │   │   └── main.jsx

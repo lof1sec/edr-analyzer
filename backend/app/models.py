@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -22,6 +22,10 @@ class LogEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     event_type = Column(String, index=True) # e.g. ProcessCreated, etc
+    # Normalised event time (epoch milliseconds), extracted from the raw event at
+    # upload. Nullable: events without a usable timestamp fall back to insertion
+    # order in the timeline.
+    event_time = Column(BigInteger, index=True, nullable=True)
     # JSONB on PostgreSQL (production); plain JSON elsewhere (e.g. sqlite tests).
     data = Column(JSON().with_variant(JSONB, "postgresql"))
 

@@ -93,6 +93,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ positions }),
     }),
+
+  getTimeline: (id, { offset = 0, limit = 200, eventType = '', q = '' } = {}) => {
+    const params = new URLSearchParams();
+    params.set('offset', String(offset));
+    params.set('limit', String(limit));
+    if (eventType) params.set('event_type', eventType);
+    if (q) params.set('q', q);
+    return request(`/api/graph/${id}/timeline?${params.toString()}`);
+  },
 };
 
 export { API_URL };

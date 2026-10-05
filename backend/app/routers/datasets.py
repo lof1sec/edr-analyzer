@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Dataset, GraphLayout, LogEvent
+from app.parsers.timestamps import extract_timestamp
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
 from app.routers.auth import require_user
@@ -280,7 +281,12 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     batch = []
     try:
         for event_type, row in row_iterator:
-            batch.append(LogEvent(dataset_id=dataset.id, event_type=event_type, data=row))
+            batch.append(LogEvent(
+                dataset_id=dataset.id,
+                event_type=event_type,
+                event_time=extract_timestamp(row),
+                data=row,
+            ))
             total_events += 1
             if len(batch) >= INSERT_BATCH_SIZE:
                 _flush_batch(db, batch)

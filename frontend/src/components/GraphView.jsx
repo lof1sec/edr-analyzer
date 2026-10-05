@@ -107,7 +107,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0)
   }
 }
 
-export default function GraphView({ datasetId }) {
+export default function GraphView({ datasetId, focusElementId, onFocusConsumed }) {
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -173,6 +173,30 @@ export default function GraphView({ datasetId }) {
     }
     return map;
   }, [elements]);
+
+  // Focus an element requested by another view (e.g. the timeline). Waits until
+  // it is present in the loaded payload, then centres and selects it, and
+  // reports back so the same request is not repeated.
+  useEffect(() => {
+    if (!focusElementId || !cyRef.current) return;
+    const element = elementsById.get(focusElementId);
+    if (!element) return;
+    const cy = cyRef.current;
+    const target = cy.getElementById(focusElementId);
+    if (target.nonempty()) {
+      cy.animate(
+        { center: { eles: target }, zoom: Math.max(cy.zoom(), 1) },
+        { duration: 300 }
+      );
+    }
+    if (element.data) {
+      setSelectedLogs([]);
+      setSelectedNode(element.data);
+      setIsRightPaneOpen(true);
+      setActiveTab('details');
+    }
+    if (onFocusConsumed) onFocusConsumed();
+  }, [focusElementId, elementsById, onFocusConsumed]);
 
   useEffect(() => {
     if (!datasetId) return;

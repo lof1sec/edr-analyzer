@@ -1,13 +1,16 @@
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import String, cast
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Dataset, GraphLayout, LogEvent
 from app.parsers.builder import GraphBuilder
 from app.parsers.defender import parse_defender_event
+from app.parsers.events import describe_event
 from app.parsers.falcon import parse_falcon_event
+from app.parsers.timestamps import format_timestamp
 from app.parsers.vendor import DEFENDER, FALCON, get_vendor
 from app.routers import graph_cache
 from app.routers.auth import require_user
@@ -47,28 +50,20 @@ def _build_graph_payload(dataset_id: int, db: Session) -> dict:
         # Vendor is detected per event, so a dataset can safely mix exports.
         vendor = get_vendor(event)
 
-        if vendor == FALCON:
-            actor_id = event.get("ContextProcessId") or event.get("SourceProcessId") or event.get("ParentProcessId")
-            actor_name = event.get("ContextBaseFileName") or event.get("ParentBaseFileName")
-            target_id = event.get("TargetProcessId")
-            target_name = event.get("FileName") or event.get("TargetFileName", "")
-            username = event.get("UserName", "Unknown")
-            hostname = event.get("ComputerName", "")
-            if not actor_id and target_id:
-               actor_id = target_id
-
-            parse_falcon_event(builder, event, evt_type, actor_id, actor_name, target_id, target_name, username, hostname)
-        elif vendor == DEFENDER:
-            actor_id = event.get("InitiatingProcessId")
-            actor_name = event.get("InitiatingProcessFileName")
-            target_id = event.get("ProcessId")
-            target_name = event.get("FileName")
-            domain = event.get("AccountDomain", "")
-            user = event.get("AccountName", "Unknown")
-            username = f"{domain}\\{user}" if domain and user != "Unknown" else user
-            hostname = event.get("DeviceName", "")
-
-            parse_defender_event(builder, event, evt_type, actor_id, actor_name, target_id, target_name, username, hostname)
+        if vendor in (FALCON, DEFENDER):
+            ctx = describe_event(event, vendor)
+            parse = parse_falcon_event if vendor == FALCON else parse_defender_event
+            parse(
+                builder,
+                event,
+                evt_type,
+                ctx["actor_id"],
+                ctx["actor_name"],
+                ctx["target_id"],
+                ctx["target_name"],
+                ctx["username"],
+                ctx["hostname"],
+            )
         else:
             # Neither vendor marker is present. Report it as unmapped instead of
             # force-feeding it to the Defender parser.
@@ -132,6 +127,104 @@ def search_graph(
     index = payload.get("search_index", {})
     ids = [element_id for element_id, text in index.items() if any(term in text for term in terms)]
     return {"ids": ids}
+
+
+# --- Chronological timeline -------------------------------------------------
+
+TIMELINE_DEFAULT_LIMIT = 200
+TIMELINE_MAX_LIMIT = 1000
+
+
+def _short_text(value, limit: int = 60) -> str:
+    if value in (None, ""):
+        return ""
+    text = str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _summarize(event_type: str, ctx: dict) -> str:
+    """One-line human summary of an event (never the raw log)."""
+    actor = _short_text(ctx.get("actor_name") or ctx.get("actor_id"), 40)
+    target = _short_text(ctx.get("target_name") or ctx.get("target_id"), 40)
+    if actor and target:
+        return f"{actor} → {target}"
+    return target or actor or event_type
+
+
+def _timeline_element_ids(ctx: dict) -> list[str]:
+    """Best-effort graph element ids to highlight for an event.
+
+    Process node ids are the ``str(pid)`` the builder uses, so the actor/target
+    pids map directly; artifacts keep their own id scheme and are not mapped.
+    """
+    ids = []
+    for key in ("actor_id", "target_id"):
+        value = ctx.get(key)
+        if value not in (None, ""):
+            ids.append(str(value))
+    return list(dict.fromkeys(ids))
+
+
+@router.get("/{dataset_id}/timeline")
+def get_timeline(
+    dataset_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(TIMELINE_DEFAULT_LIMIT, ge=1, le=TIMELINE_MAX_LIMIT),
+    event_type: str | None = Query(None),
+    q: str | None = Query(None),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
+    db: Session = Depends(get_db),
+):
+    """Return a dataset's events in chronological order, paginated.
+
+    Events are ordered by their normalised ``event_time``; events without a
+    usable timestamp sort last, in insertion order. Only compact summaries are
+    returned (raw logs stay server-side, per the payload invariant).
+    """
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    query = db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id)
+    if event_type:
+        query = query.filter(LogEvent.event_type == event_type)
+    if from_ms is not None:
+        query = query.filter(LogEvent.event_time >= from_ms)
+    if to_ms is not None:
+        query = query.filter(LogEvent.event_time <= to_ms)
+    if q:
+        query = query.filter(cast(LogEvent.data, String).ilike(f"%{q}%"))
+
+    total = query.count()
+    # ``event_time IS NULL`` is False (0) for dated events, so ordering by it
+    # ascending puts dated events first; undated ones keep insertion order last.
+    ordered = query.order_by(
+        LogEvent.event_time.is_(None),
+        LogEvent.event_time.asc(),
+        LogEvent.id.asc(),
+    )
+    rows = ordered.offset(offset).limit(limit).all()
+
+    entries = []
+    for index, log in enumerate(rows, start=offset):
+        event = log.data if isinstance(log.data, dict) else {}
+        vendor = get_vendor(event)
+        ctx = describe_event(event, vendor)
+        entries.append({
+            "index": index,
+            "id": log.id,
+            "time_ms": log.event_time,
+            "iso": format_timestamp(log.event_time),
+            "event_type": log.event_type,
+            "vendor": vendor,
+            "summary": _summarize(log.event_type, ctx),
+            "actor_id": ctx.get("actor_id"),
+            "target_id": ctx.get("target_id"),
+            "element_ids": _timeline_element_ids(ctx),
+        })
+
+    return {"total": total, "offset": offset, "limit": limit, "entries": entries}
 
 
 # Safety cap for the on-demand neighbourhood endpoint: a hub at depth 3 can pull

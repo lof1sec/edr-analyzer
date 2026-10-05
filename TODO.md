@@ -319,9 +319,69 @@ Bugs/endurecimientos que el fuzzing motivó:
 
 ---
 
+## Timeline / vista cronológica con reproducción — ✅ HECHO
+
+**Estado:** implementado. Vista de línea temporal con reproducción y enlace al
+grafo.
+
+**Objetivo:** ver los eventos del dataset en orden cronológico y reproducir la
+secuencia (play/pausa, velocidad, scrubber), con filtros y salto al elemento en
+el grafo.
+
+### Backend
+
+- [x] **Timestamp normalizado**: `LogEvent.event_time` (epoch ms, nullable) +
+      migración `0004_add_event_time`. Se rellena en el upload con
+      `extract_timestamp` (`app/parsers/timestamps.py`), que entiende epoch
+      segundos/ms y ISO-8601, con campos de Falcon (`timestamp`) y Defender
+      (`Timestamp`/`EventTime`/…). Sin timestamp → `NULL` (orden de inserción).
+- [x] **Descripción de evento compartida**: `describe_event`
+      (`app/parsers/events.py`) extrae actor/target/usuario/host por vendor; lo
+      usan el grafo y la timeline (mismo criterio de campos, invariante 1).
+- [x] **Endpoint**: `GET /api/graph/{id}/timeline?offset&limit&event_type&q&from&to`
+      (auth), paginado, orden `event_time NULLS LAST, id`. Devuelve entradas
+      compactas (hora, tipo, vendor, resumen, ids de elemento best-effort), nunca
+      raw logs (invariante 11).
+
+### Frontend
+
+- [x] **`TimelineView.jsx`**: lista cronológica con reproducción (play/pausa,
+      velocidad 0.5×–8×, scrubber, siguiente/anterior), búsqueda y filtro por
+      tipo de evento, y "Load more" (paginado).
+- [x] **Selector Grafo/Timeline** en `App.jsx`; al pulsar un evento se salta al
+      grafo y se enfoca el elemento (`focusElementId` → `GraphView`).
+- [x] **`api.getTimeline`** en `frontend/src/api/client.js` (única vía de API).
+
+### Configuración
+
+- Sin variables nuevas obligatorias: `TIMELINE_DEFAULT_LIMIT` (200) y
+  `TIMELINE_MAX_LIMIT` (1000) son constantes del router.
+
+### Testing
+
+- `backend/tests/test_timestamps.py` (epoch s/ms, ISO con/sin zona, `None`).
+- `backend/tests/test_timeline.py` (orden con undated al final, paginación,
+  filtros, 404).
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+### Pendiente / ideas (follow-up)
+
+- [ ] Mapeo completo evento→elemento (hoy solo procesos vía PID); enlazar
+      artefactos (files/registry/network) requiere que el builder registre el id
+      por evento.
+- [ ] Backfill de `event_time` para datasets subidos antes de la migración
+      `0004` (hoy caen a orden de inserción).
+- [ ] Filtro por rango temporal en la UI (el endpoint ya acepta `from`/`to`).
+- [ ] Reproducción que resalte en el grafo en tiempo real sin cambiar de vista.
+- [ ] Agrupar/colapsar eventos repetidos y "saltar al siguiente evento del mismo
+      proceso".
+
+---
+
 ## Pendiente / ideas siguientes (fuera del punto 3)
 
-- [ ] **Timeline / vista cronológica** con reproducción de la secuencia de eventos.
+- [x] **Timeline / vista cronológica** con reproducción de la secuencia de
+      eventos — hecho (sección homónima de arriba).
 - [ ] **Mapeo MITRE ATT&CK** por evento (táctica/técnica) y filtro por técnica.
 - [ ] **Detección de patrones sospechosos** (LOLBins, inyección, persistencia) y
       risk score — plan detallado en la sección homónima de arriba.
