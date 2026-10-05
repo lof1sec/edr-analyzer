@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Dataset, GraphLayout, LogEvent
+from app.parsers.timestamps import extract_timestamp
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
 from app.routers.auth import require_user
@@ -61,6 +62,16 @@ def _detect_encoding_and_check_size(file_obj) -> str:
                 # Not valid UTF-8: fall back to latin-1, which never fails.
                 encoding = "latin-1"
 
+    if encoding == "utf-8-sig":
+        # Flush the incremental decoder: a trailing truncated multi-byte
+        # sequence (e.g. b"\xc2") is only reported once the input is final.
+        # Without this the file is misdetected as UTF-8 and decoding later
+        # raises inside the parser instead of falling back to latin-1.
+        try:
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            encoding = "latin-1"
+
     file_obj.seek(0)
     return encoding
 
@@ -74,7 +85,12 @@ def _iter_clean_lines(file_obj, encoding):
                 line = line.replace("\x00", "")
             yield line
     finally:
-        stream.detach()
+        try:
+            stream.detach()
+        except ValueError:
+            # The underlying buffer was already closed (the generator was
+            # garbage-collected without being fully consumed).
+            pass
 
 
 def _parse_csv_rows(file_obj, encoding):
@@ -85,8 +101,13 @@ def _parse_csv_rows(file_obj, encoding):
     vendor no longer depends on the file extension.
     """
     reader = csv.DictReader(_iter_clean_lines(file_obj, encoding))
-    for row in reader:
-        yield extract_event_type(row), row
+    try:
+        for row in reader:
+            yield extract_event_type(row), row
+    except csv.Error:
+        # e.g. a field larger than csv.field_size_limit: a malformed export,
+        # reported as a client error rather than an unhandled 500.
+        raise HTTPException(status_code=400, detail="Failed to parse CSV file") from None
 
 
 def _looks_like_json_array(file_obj, encoding) -> bool:
@@ -161,7 +182,12 @@ def _iter_json_array(file_obj, encoding):
             buffer = buffer[end:]
             yield value
     finally:
-        stream.detach()
+        try:
+            stream.detach()
+        except ValueError:
+            # The underlying buffer was already closed (the generator was
+            # garbage-collected without being fully consumed).
+            pass
 
 
 def _parse_json_array(file_obj, encoding):
@@ -170,7 +196,7 @@ def _parse_json_array(file_obj, encoding):
         for row in _iter_json_array(file_obj, encoding):
             if isinstance(row, dict):
                 yield extract_event_type(row), row
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         raise HTTPException(status_code=400, detail="Failed to parse JSON file") from None
 
 
@@ -180,7 +206,7 @@ def _parse_json_document(file_obj, encoding):
     raw = file_obj.read().decode(encoding, errors="replace").replace("\x00", "")
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         raise HTTPException(status_code=400, detail="Failed to parse JSON file") from None
 
     # Accept a single event object (arrays never reach this fallback).
@@ -203,7 +229,7 @@ def _parse_json_rows(file_obj, encoding):
             line = line[:-1]
         try:
             row = json.loads(line)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             continue
         if isinstance(row, dict):
             parsed_any = True
@@ -255,7 +281,12 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     batch = []
     try:
         for event_type, row in row_iterator:
-            batch.append(LogEvent(dataset_id=dataset.id, event_type=event_type, data=row))
+            batch.append(LogEvent(
+                dataset_id=dataset.id,
+                event_type=event_type,
+                event_time=extract_timestamp(row),
+                data=row,
+            ))
             total_events += 1
             if len(batch) >= INSERT_BATCH_SIZE:
                 _flush_batch(db, batch)

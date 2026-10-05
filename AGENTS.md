@@ -74,6 +74,10 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/parsers/vendor.py` — vendor / event-type detection from fields.
 - `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
+- `backend/app/parsers/events.py` — shared per-vendor actor/target/user/host
+  extraction (`describe_event`), used by the graph builder and the timeline.
+- `backend/app/parsers/timestamps.py` — normalises an event's time to epoch
+  milliseconds (`extract_timestamp`); `None` when unknown.
 - `backend/app/routers/auth.py` — first-run admin setup, login/logout, and the
   `require_user` guard (httpOnly session cookie).
 - `backend/app/security.py` — Argon2id password hashing.
@@ -81,17 +85,22 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   (Postgres credentials) on startup.
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
-  lazy raw-log/search/cluster/neighbour endpoints, saved-layout read/write, and
-  cache-backed payloads.
+  lazy raw-log/search/cluster/neighbour endpoints, the chronological timeline,
+  saved-layout read/write, and cache-backed payloads.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
   generated graphs; invalidated on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
+- `backend/app/models.py` — `LogEvent.event_time` (epoch ms, nullable) is filled
+  at upload; undated events fall back to insertion order in the timeline.
 - `backend/main.py` — FastAPI app, session middleware, CORS allowlist, startup
   migrations.
 - `backend/alembic/` — migration environment + revisions.
 - `frontend/src/api/client.js` — **single** place for API calls; always use it.
 - `frontend/src/components/GraphView.jsx` — the large graph component (be careful).
+- `frontend/src/components/TimelineView.jsx` — chronological list + playback;
+  `App.jsx` toggles Graph/Timeline and hands a clicked element to `GraphView`
+  via the `focusElementId` prop.
 - `frontend/src/components/AuthPage.jsx` — login / first-run setup gate.
 - `frontend/src/components/Toast.jsx` + `hooks/useToast.js` — app-wide toasts.
 - `frontend/src/components/EmptyState.jsx` — shared empty/placeholder state.
@@ -143,10 +152,14 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
     stays in the payload, and every hidden element keeps its search/raw-log
     entries for on-demand expansion. Saved layouts live in `graph_layouts` (one
     row per dataset) and are deleted with the dataset.
+11. **Timeline entries are derived summaries, not raw logs.** `event_time` is
+    normalised at upload (`extract_timestamp`); the timeline endpoint returns one
+    compact entry per event (time, type, summary, best-effort element ids) and
+    never ships raw events. Playback loops over the loaded page client-side.
 
 ## Testing
 
-- Backend: `backend/tests/` (69 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (93 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
@@ -156,13 +169,21 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   `JSON().with_variant(JSONB, "postgresql")` so the schema also builds on sqlite.
   `conftest.py` sets `SECRET_KEY` so session cookies are valid in tests. Add a
   test when adding an event mapping, endpoint, or touching the payload.
+- Backend property tests (Hypothesis, dev-only, `requirements-dev.txt`):
+  `tests/test_fuzz_*.py` fuzz the pure parsers and upload helpers; shared
+  strategies and the graph invariants live in `tests/strategies.py`. `conftest.py`
+  loads a deterministic `ci` profile (`max_examples=150`, `deadline=None`,
+  `derandomize=True`) so CI stays reproducible. When a parser reads a field that
+  may not be text, wrap it with `builder.as_text()` and keep
+  `assert_graph_invariants` green.
 - Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
   Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
   in defaults are intentionally exempt via `B008`.
-- Frontend: `npm run lint` (oxlint) and `npm run build`. A few `react` warnings
-  are tolerated (a handful of `set-state-in-effect` for async data loads, plus
-  one `react(refs)` for intentionally reading `initialPositions` in a `useMemo`).
-  Do not fail the build over these.
+- Frontend: `npm run lint` (oxlint) and `npm run build`. A handful of `react`
+  warnings are tolerated (several `set-state-in-effect` for async data loads in
+  `App.jsx`, `GraphView.jsx` and `TimelineView.jsx`, plus one `react(refs)` for
+  intentionally reading `initialPositions` in a `useMemo`). `oxlint` exits `0` on
+  warnings; do not fail the build over these.
 - CI (`.github/workflows/ci.yml`) runs on push/PR to `main` and `v2`
   (backend: ruff + pytest; frontend: lint + build).
 
