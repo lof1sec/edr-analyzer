@@ -24,6 +24,13 @@ _SOCKET_PROTOCOLS = {
     "58": "ICMPV6",
     "255": "UNKNOWN",
 }
+_CONNECTION_DIRECTIONS = {
+    "0": "OUTBOUND",
+    "1": "INBOUND",
+    "2": "NEITHER",
+    "3": "BOTH",
+    "4": "UNKNOWN",
+}
 
 
 def _decode_enum(table: dict, value) -> str:
@@ -636,6 +643,60 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 file_node_id,
                 "Accesses Critical File",
                 "#ff4d4d",
+                evt_type,
+                raw_event=event)
+
+    elif evt_type == "NetworkLinkConfigGetAddress":
+        # Only carries the originating process: register the node (and its
+        # action/raw logs) so the event is mapped rather than unmapped.
+        actor_ident = context_id or source_id
+        if actor_ident:
+            builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event)
+
+    elif evt_type == "CriticalEnvironmentVariableChanged":
+        actor_ident = context_id or source_id
+        env_name = as_text(event.get("EnvironmentVariableName", ""))
+        env_value = as_text(event.get("EnvironmentVariableValue", ""))
+        if actor_ident and env_name:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            env_node_id = f"env_{string_hash(env_name)}"
+            env_info = f"[{evt_type}]\nName: {env_name}\nValue: {env_value}"
+            builder.add_or_update_artifact_node(
+                env_node_id, f"Env: {env_name}", env_info, "registry", event)
+            builder.add_edge(
+                actor_ident,
+                env_node_id,
+                "Sets Env Var",
+                "#ff9933",
+                evt_type,
+                raw_event=event)
+
+    elif evt_type == "NetworkListenIP4":
+        # A process opened a socket in listening mode; the endpoint is local.
+        actor_ident = context_id or source_id
+        local_ip = as_text(event.get("LocalAddressIP4", ""))
+        local_port = as_text(event.get("LocalPort", ""))
+        if actor_ident and (local_ip or local_port):
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            endpoint = f"{local_ip}:{local_port}" if local_port else local_ip
+            protocol = _decode_enum(_SOCKET_PROTOCOLS, event.get("Protocol"))
+            direction = _decode_enum(_CONNECTION_DIRECTIONS, event.get("ConnectionDirection"))
+            listen_info = (
+                f"[{evt_type}]\nLocal: {endpoint}\n"
+                f"Protocol: {protocol}\nDirection: {direction}"
+            )
+            builder.add_or_update_artifact_node(
+                endpoint, f"Listen {endpoint}", listen_info, "network", event)
+            builder.add_edge(
+                actor_ident,
+                endpoint,
+                "Listens On",
+                "#00ffff",
                 evt_type,
                 raw_event=event)
 

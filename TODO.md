@@ -434,6 +434,17 @@ ids antiguos.
       como artefacto `file` (mismo id `file_{hash(path)}` que el resto de eventos
       de fichero) con ruta, `UID`, `GID` y `UnixMode` en el título, y arista
       `Accesses Critical File` (`#ff4d4d`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkLinkConfigGetAddress`**: solo trae el proceso; se registra
+      el nodo y su acción (sin artefacto/arista), evitando que cuente como
+      unmapped. Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CriticalEnvironmentVariableChanged`**: `EnvironmentVariableName`/
+      `Value` se mapean como artefacto `registry` (`Env: NAME`) con arista
+      `Sets Env Var` (`#ff9933`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkListenIP4`**: el socket en listening se mapea como
+      artefacto `network` con el endpoint local (`LocalAddressIP4:LocalPort`,
+      mismo esquema de id que la red) y arista `Listens On` (`#00ffff`), con
+      `Protocol`/`ConnectionDirection` decodificados. Regresión en
+      `test_parsers_smoke.py`.
 
 ### Recomendaciones no aplicadas (bajo impacto)
 
@@ -446,7 +457,7 @@ ids antiguos.
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **104 tests** (regresiones de los 4 bugs + los
+- [x] `backend/tests/` pasa a **107 tests** (regresiones de los 4 bugs + los
       nuevos eventos); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
 
 ---

@@ -280,3 +280,85 @@ def test_falcon_critical_file_accessed_maps_file_artifact():
     )
     assert edge["data"]["source"] == "4321@lnx1"
     assert edge["data"]["target"] == file_node["data"]["id"]
+
+
+def test_falcon_network_link_config_registers_process_only():
+    """NetworkLinkConfigGetAddress only carries the process: no artifact/edge."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "NetworkLinkConfigGetAddress",
+            "ContextProcessId": "1111",
+            "ComputerName": "lnx1",
+        },
+        "NetworkLinkConfigGetAddress",
+        "1111", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1111@lnx1" in node_ids
+    assert payload["elements"]["edges"] == []
+    assert builder.unmapped_events == []
+
+
+def test_falcon_critical_env_var_changed_maps_config_artifact():
+    """CriticalEnvironmentVariableChanged: name/value become a config artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CriticalEnvironmentVariableChanged",
+            "ContextProcessId": "2222",
+            "EnvironmentVariableName": "LD_PRELOAD",
+            "EnvironmentVariableValue": "/tmp/evil.so",
+            "ComputerName": "lnx1",
+        },
+        "CriticalEnvironmentVariableChanged",
+        "2222", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "2222@lnx1" in node_ids
+
+    env = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "registry")
+    assert env["data"]["label"] == "Env: LD_PRELOAD"
+    assert "/tmp/evil.so" in env["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Sets Env Var")
+    assert edge["data"]["source"] == "2222@lnx1"
+    assert edge["data"]["target"] == env["data"]["id"]
+
+
+def test_falcon_network_listen_maps_local_endpoint():
+    """NetworkListenIP4: the listening endpoint becomes a network artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "NetworkListenIP4",
+            "ContextProcessId": "3333",
+            "LocalAddressIP4": "0.0.0.0",
+            "LocalPort": "4444",
+            "Protocol": "6",
+            "ConnectionDirection": "1",
+            "ComputerName": "lnx1",
+        },
+        "NetworkListenIP4",
+        "3333", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "3333@lnx1" in node_ids
+
+    endpoint = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "network")
+    assert endpoint["data"]["id"] == "0.0.0.0:4444"
+    assert "Protocol: TCP" in endpoint["data"]["title"]
+    assert "Direction: INBOUND" in endpoint["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Listens On")
+    assert edge["data"]["source"] == "3333@lnx1"
+    assert edge["data"]["target"] == endpoint["data"]["id"]

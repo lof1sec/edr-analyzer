@@ -120,6 +120,9 @@ FALCON_EVENT_TYPES = [
     "ScriptControlScanInfo",
     "CreateSocket",
     "CriticalFileAccessed",
+    "NetworkLinkConfigGetAddress",
+    "CriticalEnvironmentVariableChanged",
+    "NetworkListenIP4",
 ]
 
 
