@@ -117,6 +117,7 @@ FALCON_EVENT_TYPES = [
     "ModuleCertificateInfo2",
     "UserLogoff",
     "CommandHistory",
+    "ScriptControlScanInfo",
 ]
 
 

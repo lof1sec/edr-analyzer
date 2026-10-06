@@ -512,6 +512,38 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 dashed=True,
                 raw_event=event)
 
+    elif evt_type == "ScriptControlScanInfo":
+        # CrowdStrike ScriptControl scan: a process ran/loaded a script. The
+        # script is represented as a file artifact (name + hash); the (possibly
+        # large) content is only summarised in the title.
+        actor_ident = context_id or source_id
+        script_name = as_text(event.get("ScriptContentName", ""))
+        script_content = as_text(event.get("ScriptContent", ""))
+        if actor_ident and (script_name or script_content):
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            sha256 = as_text(event.get("ContentSHA256HashData", "N/A"))
+            short = script_name.replace("\\", "/").split("/")[-1] or "script"
+            script_node_id = f"script_{string_hash(script_name or script_content)}"
+            snippet = (
+                script_content[:200] + "…" if len(script_content) > 200 else script_content
+            )
+            script_info = f"[{evt_type}]\nScript: {script_name}\nSHA256: {sha256}"
+            if snippet:
+                script_info += f"\nContent:\n{snippet}"
+
+            builder.add_or_update_artifact_node(
+                script_node_id, short, script_info, "file", event)
+            builder.add_edge(
+                actor_ident,
+                script_node_id,
+                "Runs Script",
+                "#4da6ff",
+                evt_type,
+                dashed=True,
+                raw_event=event)
+
     else:
         builder.unmapped_events.append(evt_type)
         actor_ident = context_id or source_id or parent_id

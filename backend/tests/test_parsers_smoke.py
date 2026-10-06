@@ -179,3 +179,36 @@ def test_same_pid_on_different_hosts_creates_distinct_process_nodes():
     for edge in payload["elements"]["edges"]:
         assert edge["data"]["source"] in node_ids
         assert edge["data"]["target"] in node_ids
+
+
+def test_falcon_script_control_scan_maps_script_as_file():
+    """ScriptControlScanInfo: the scanned script becomes a file artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "ScriptControlScanInfo",
+            "ContextProcessId": "1791226316986324238",
+            "ScriptContentName": "/home/acme/py_setup.py",
+            "ScriptContent": "#!/usr/libexec/platform-python\n",
+            "ContentSHA256HashData": (
+                "aa376eada2bee4aafe99b1fbd3f5d170ba27e7f9c3c9b0dbcefb06cba63c33df"
+            ),
+            "ComputerName": "acme-lnx",
+        },
+        "ScriptControlScanInfo",
+        "1791226316986324238", None, None, None, None, "acme-lnx",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1791226316986324238@acme-lnx" in node_ids
+
+    script = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "file")
+    assert script["data"]["label"] == "py_setup.py"
+    assert "py_setup.py" in script["data"]["title"]
+    assert "aa376e" in script["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Runs Script")
+    assert edge["data"]["source"] == "1791226316986324238@acme-lnx"
+    assert edge["data"]["target"] == script["data"]["id"]

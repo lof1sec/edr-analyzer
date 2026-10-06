@@ -420,6 +420,13 @@ ids antiguos.
 - [x] `pool_pre_ping=True` en `create_engine` (`app/database.py`) para evitar
       conexiones stale tras un reinicio de Postgres.
 
+### Eventos de parser añadidos
+
+- [x] **Falcon `ScriptControlScanInfo`**: el script escaneado por ScriptControl
+      se mapea como artefacto `file` (nombre corto + ruta + SHA256 + snippet del
+      contenido, truncado a 200 chars) con una arista `Runs Script` desde el
+      proceso que lo ejecuta. Regresión en `test_parsers_smoke.py`.
+
 ### Recomendaciones no aplicadas (bajo impacto)
 
 - [ ] Extraer la constante `"Unknown"` duplicada en `events.py`/parsers.
@@ -431,8 +438,8 @@ ids antiguos.
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **101 tests** (regresiones de los 4 bugs); `ruff`
-      limpio. Frontend: `lint` (0 errores) + `build` OK.
+- [x] `backend/tests/` pasa a **102 tests** (regresiones de los 4 bugs + el nuevo
+      evento); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
 
 ---
 
