@@ -165,7 +165,7 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 
 ## Testing
 
-- Backend: `backend/tests/` (102 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (103 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).

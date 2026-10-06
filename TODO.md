@@ -426,6 +426,10 @@ ids antiguos.
       se mapea como artefacto `file` (nombre corto + ruta + SHA256 + snippet del
       contenido, truncado a 200 chars) con una arista `Runs Script` desde el
       proceso que lo ejecuta. Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CreateSocket`**: la creación de un socket se mapea como artefacto
+      `network` keyed por proceso + (AddressFamily, SocketType, Protocol), con
+      `SocketType`/`Protocol` decodificados a etiquetas (`1→STREAM`, `6→TCP`, …) y
+      arista `Creates Socket` (`#00ffff`). Regresión en `test_parsers_smoke.py`.
 
 ### Recomendaciones no aplicadas (bajo impacto)
 
@@ -438,8 +442,8 @@ ids antiguos.
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **102 tests** (regresiones de los 4 bugs + el nuevo
-      evento); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
+- [x] `backend/tests/` pasa a **103 tests** (regresiones de los 4 bugs + los
+      nuevos eventos); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
 
 ---
 

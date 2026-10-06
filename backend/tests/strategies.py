@@ -118,6 +118,7 @@ FALCON_EVENT_TYPES = [
     "UserLogoff",
     "CommandHistory",
     "ScriptControlScanInfo",
+    "CreateSocket",
 ]
 
 

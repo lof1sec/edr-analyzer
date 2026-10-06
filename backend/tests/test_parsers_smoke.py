@@ -212,3 +212,35 @@ def test_falcon_script_control_scan_maps_script_as_file():
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Runs Script")
     assert edge["data"]["source"] == "1791226316986324238@acme-lnx"
     assert edge["data"]["target"] == script["data"]["id"]
+
+
+def test_falcon_create_socket_maps_network_artifact():
+    """CreateSocket: the socket becomes a network artifact of the process."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CreateSocket",
+            "ContextProcessId": "1234",
+            "AddressFamily": "2",
+            "SocketType": "1",
+            "Protocol": "6",
+            "ImageFileName": "/usr/bin/curl",
+            "ComputerName": "lnx1",
+        },
+        "CreateSocket",
+        "1234", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1234@lnx1" in node_ids
+
+    socket = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "network")
+    assert socket["data"]["label"] == "Socket: TCP/STREAM"
+    assert "Socket Type: STREAM" in socket["data"]["title"]
+    assert "Protocol: TCP" in socket["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Creates Socket")
+    assert edge["data"]["source"] == "1234@lnx1"
+    assert edge["data"]["target"] == socket["data"]["id"]

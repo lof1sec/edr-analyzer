@@ -2,6 +2,36 @@ import textwrap
 
 from app.parsers.builder import GraphBuilder, as_text, hash_str, string_hash
 
+# CrowdStrike CreateSocket enum values (numeric code -> readable label). Kept
+# minimal and defensive: unknown codes fall back to the raw value.
+_SOCKET_TYPES = {
+    "1": "STREAM",
+    "2": "DGRAM",
+    "3": "RAW",
+    "4": "RDM",
+    "5": "SEQPACKET",
+    "6": "DCCP",
+    "10": "PACKET",
+}
+_SOCKET_PROTOCOLS = {
+    "0": "IP",
+    "1": "ICMP",
+    "2": "IGMP",
+    "6": "TCP",
+    "17": "UDP",
+    "41": "IPV6",
+    "47": "GRE",
+    "58": "ICMPV6",
+    "255": "UNKNOWN",
+}
+
+
+def _decode_enum(table: dict, value) -> str:
+    """Decode a numeric enum to its label, falling back to the raw value."""
+    if value in (None, ""):
+        return "?"
+    return table.get(str(value), str(value))
+
 
 def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
                        actor_name: str, target_id: str, target_name: str, username: str, hostname: str):
@@ -542,6 +572,35 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 "#4da6ff",
                 evt_type,
                 dashed=True,
+                raw_event=event)
+
+    elif evt_type == "CreateSocket":
+        # A process opened a socket. There is no remote endpoint, so the socket
+        # is represented as a network artifact keyed by the owning process and
+        # its (family, type, protocol) description.
+        actor_ident = context_id or source_id
+        if actor_ident:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            family = as_text(event.get("AddressFamily", "?")) or "?"
+            socket_type = _decode_enum(_SOCKET_TYPES, event.get("SocketType"))
+            protocol = _decode_enum(_SOCKET_PROTOCOLS, event.get("Protocol"))
+            socket_node_id = f"socket_{string_hash(f'{actor_ident}|{family}|{socket_type}|{protocol}')}"
+            label = f"Socket: {protocol}/{socket_type}"
+            socket_info = (
+                f"[{evt_type}]\nAddress Family: {family}\n"
+                f"Socket Type: {socket_type}\nProtocol: {protocol}"
+            )
+
+            builder.add_or_update_artifact_node(
+                socket_node_id, label, socket_info, "network", event)
+            builder.add_edge(
+                actor_ident,
+                socket_node_id,
+                "Creates Socket",
+                "#00ffff",
+                evt_type,
                 raw_event=event)
 
     else:
