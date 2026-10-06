@@ -603,6 +603,42 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 evt_type,
                 raw_event=event)
 
+    elif evt_type == "CriticalFileAccessed":
+        # A process accessed a critical file. The file shares the same id scheme
+        # as the other file events, so reads/writes/modifications of the same
+        # path collapse into one node.
+        actor_ident = context_id or source_id
+        file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
+        if actor_ident and file_name:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            clean_path = file_name.replace("\\", "/")
+            short_name = clean_path.rstrip("/").split("/")[-1]
+            display_file = short_name[:50] + "..." if len(short_name) > 50 else short_name
+
+            file_node_id = f"file_{string_hash(file_name)}"
+            uid = as_text(event.get("UID", ""))
+            gid = as_text(event.get("GID", ""))
+            unix_mode = as_text(event.get("UnixMode", ""))
+            file_info = f"[{evt_type}]\nFile: {file_name}"
+            if uid:
+                file_info += f"\nUID: {uid}"
+            if gid:
+                file_info += f"\nGID: {gid}"
+            if unix_mode:
+                file_info += f"\nUnix Mode: {unix_mode}"
+
+            builder.add_or_update_artifact_node(
+                file_node_id, display_file, file_info, "file", event)
+            builder.add_edge(
+                actor_ident,
+                file_node_id,
+                "Accesses Critical File",
+                "#ff4d4d",
+                evt_type,
+                raw_event=event)
+
     else:
         builder.unmapped_events.append(evt_type)
         actor_ident = context_id or source_id or parent_id

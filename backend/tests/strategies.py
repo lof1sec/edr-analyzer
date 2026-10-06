@@ -119,6 +119,7 @@ FALCON_EVENT_TYPES = [
     "CommandHistory",
     "ScriptControlScanInfo",
     "CreateSocket",
+    "CriticalFileAccessed",
 ]
 
 

@@ -244,3 +244,39 @@ def test_falcon_create_socket_maps_network_artifact():
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Creates Socket")
     assert edge["data"]["source"] == "1234@lnx1"
     assert edge["data"]["target"] == socket["data"]["id"]
+
+
+def test_falcon_critical_file_accessed_maps_file_artifact():
+    """CriticalFileAccessed: the accessed file becomes a file artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CriticalFileAccessed",
+            "ContextProcessId": "4321",
+            "TargetFileName": "/etc/shadow",
+            "UID": "0",
+            "GID": "0",
+            "UnixMode": "0640",
+            "ComputerName": "lnx1",
+        },
+        "CriticalFileAccessed",
+        "4321", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "4321@lnx1" in node_ids
+
+    file_node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "file")
+    assert file_node["data"]["label"] == "shadow"
+    assert "/etc/shadow" in file_node["data"]["title"]
+    assert "UID: 0" in file_node["data"]["title"]
+    assert "Unix Mode: 0640" in file_node["data"]["title"]
+
+    edge = next(
+        e for e in payload["elements"]["edges"]
+        if e["data"]["label"] == "Accesses Critical File"
+    )
+    assert edge["data"]["source"] == "4321@lnx1"
+    assert edge["data"]["target"] == file_node["data"]["id"]

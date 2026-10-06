@@ -430,6 +430,10 @@ ids antiguos.
       `network` keyed por proceso + (AddressFamily, SocketType, Protocol), con
       `SocketType`/`Protocol` decodificados a etiquetas (`1→STREAM`, `6→TCP`, …) y
       arista `Creates Socket` (`#00ffff`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CriticalFileAccessed`**: el archivo crítico accedido se mapea
+      como artefacto `file` (mismo id `file_{hash(path)}` que el resto de eventos
+      de fichero) con ruta, `UID`, `GID` y `UnixMode` en el título, y arista
+      `Accesses Critical File` (`#ff4d4d`). Regresión en `test_parsers_smoke.py`.
 
 ### Recomendaciones no aplicadas (bajo impacto)
 
@@ -442,7 +446,7 @@ ids antiguos.
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **103 tests** (regresiones de los 4 bugs + los
+- [x] `backend/tests/` pasa a **104 tests** (regresiones de los 4 bugs + los
       nuevos eventos); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
 
 ---
