@@ -141,3 +141,41 @@ def test_falcon_command_history_uses_dark_orange_exec_style():
 
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "History")
     assert edge["data"]["color"] == "#c2410c"
+
+
+def test_same_pid_on_different_hosts_creates_distinct_process_nodes():
+    """Regression: a bare PID is unique per host, not globally (host-scoped ids)."""
+    builder = GraphBuilder()
+    parse_defender_event(
+        builder,
+        {
+            "ActionType": "ProcessCreated",
+            "InitiatingProcessId": "100",
+            "ProcessId": "200",
+            "InitiatingProcessFileName": "a.exe",
+            "FileName": "b.exe",
+            "DeviceName": "hostA",
+        },
+        "ProcessCreated", "100", "a.exe", "200", "b.exe", "u", "hostA",
+    )
+    parse_defender_event(
+        builder,
+        {
+            "ActionType": "ProcessCreated",
+            "InitiatingProcessId": "100",
+            "ProcessId": "200",
+            "InitiatingProcessFileName": "c.exe",
+            "FileName": "d.exe",
+            "DeviceName": "hostB",
+        },
+        "ProcessCreated", "100", "c.exe", "200", "d.exe", "u", "hostB",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert {"100@hostA", "200@hostA", "100@hostB", "200@hostB"} <= node_ids
+
+    # Every edge points at an existing node (no phantom endpoints).
+    for edge in payload["elements"]["edges"]:
+        assert edge["data"]["source"] in node_ids
+        assert edge["data"]["target"] in node_ids

@@ -154,14 +154,19 @@ def _summarize(event_type: str, ctx: dict) -> str:
 def _timeline_element_ids(ctx: dict) -> list[str]:
     """Best-effort graph element ids to highlight for an event.
 
-    Process node ids are the ``str(pid)`` the builder uses, so the actor/target
-    pids map directly; artifacts keep their own id scheme and are not mapped.
+    Process node ids are host-scoped (``pid@host``; see
+    ``GraphBuilder.process_node_id``), so each actor/target PID is combined
+    with the event's host to match the builder. Artifacts keep their own id
+    scheme and are not mapped.
     """
+    host = ctx.get("hostname")
+    host_text = "" if host in (None, "") else str(host).strip()
     ids = []
     for key in ("actor_id", "target_id"):
         value = ctx.get(key)
         if value not in (None, ""):
-            ids.append(str(value))
+            pid = str(value)
+            ids.append(f"{pid}@{host_text}" if host_text else pid)
     return list(dict.fromkeys(ids))
 
 

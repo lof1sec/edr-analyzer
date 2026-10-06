@@ -378,11 +378,12 @@ el grafo.
 
 ---
 
-## Revisión / correcciones (post-revisión) — 🟡 EN CURSO
+## Revisión / correcciones (post-revisión) — ✅ HECHO
 
-**Estado:** revisión completa del proyecto. Corregidos los bugs confirmados 1–3
-(crashes y duplicación de datos); el 4 queda pendiente de decisión por su impacto
-en ids/layouts.
+**Estado:** revisión completa del proyecto. Corregidos los 4 bugs confirmados
+(crashes, duplicación de datos y colisión de procesos entre hosts con la
+misma PID), incluida la migración que invalida los layouts guardados con los
+ids antiguos.
 
 ### Bugs confirmados y corregidos
 
@@ -402,20 +403,22 @@ en ids/layouts.
       generaba `members` con duplicados, inflaba el umbral y producía nodos
       repetidos al expandir (aunque `clusterCount` los contaba una vez). Se
       deduplica preservando el orden. Regresión en `test_builder.py`.
+- [x] **Colisión de procesos entre hosts** (`get_or_create_process_node`,
+      `app/parsers/builder.py`): el id del nodo era solo `str(pid)`, así que el
+      mismo PID en dos máquinas colapsaba en un único nodo y se perdía un
+      proceso. Ahora el id es **host-scoped** (`pid@host`; sin host se mantiene
+      el PID crudo). Los parsers reutilizan el id devuelto para sus aristas y
+      para los artefactos que embeben el proceso; `_timeline_element_ids`
+      (`app/routers/graph.py`) compone igual. La migración
+      `0005_clear_graph_layouts` limpia los layouts guardados (posiciones por id
+      antiguo) para que el grafo se re-componga. Regresiones en `test_builder.py`
+      y `test_parsers_smoke.py`. **Cambio incompatible forward-only**: el grafo
+      se reconstruye on-demand, pero las posiciones guardadas se descartan.
 
 ### Mejora menor aplicada
 
 - [x] `pool_pre_ping=True` en `create_engine` (`app/database.py`) para evitar
       conexiones stale tras un reinicio de Postgres.
-
-### Pendiente (requiere decisión)
-
-- [ ] **Id de proceso compuesto por host + PID** (`get_or_create_process_node`).
-      Hoy la clave del nodo es solo `str(pid)`, así que el mismo PID en dos hosts
-      distintos colisiona y se pierde el segundo proceso (habitual en exports
-      multi-host de Defender/Falcon). Componer el id con el hostname cambiaría
-      los ids (invariante 2), invalidaría layouts guardados y obligaría a ajustar
-      `element_ids` de la timeline; conviene planificarlo con migración.
 
 ### Recomendaciones no aplicadas (bajo impacto)
 
@@ -428,8 +431,8 @@ en ids/layouts.
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **98 tests** (regresiones de los 3 bugs); `ruff`
-      limpio. Sin cambios de frontend.
+- [x] `backend/tests/` pasa a **101 tests** (regresiones de los 4 bugs); `ruff`
+      limpio. Frontend: `lint` (0 errores) + `build` OK.
 
 ---
 
@@ -437,8 +440,8 @@ en ids/layouts.
 
 - [x] **Timeline / vista cronológica** con reproducción de la secuencia de
       eventos — hecho (sección homónima de arriba).
-- [~] **Revisión de código / correcciones** — 3 bugs corregidos, 1 pendiente
-      (sección homónima de arriba).
+- [x] **Revisión de código / correcciones** — 4 bugs corregidos (sección
+      homónima de arriba).
 - [ ] **Mapeo MITRE ATT&CK** por evento (táctica/técnica) y filtro por técnica.
 - [ ] **Detección de patrones sospechosos** (LOLBins, inyección, persistencia) y
       risk score — plan detallado en la sección homónima de arriba.

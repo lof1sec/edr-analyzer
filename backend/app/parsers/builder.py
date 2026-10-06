@@ -150,10 +150,27 @@ class GraphBuilder:
         self.unmapped_events = []
         self._edge_seq = 0
 
+    def process_node_id(self, pid, hostname=None):
+        """Stable id for a process node, namespaced by its host.
+
+        A bare PID is only unique per machine, so the same PID on two hosts
+        would otherwise collapse into a single node and silently lose a
+        process. When the host is known the id becomes ``pid@host``; without a
+        host the id stays the raw PID, so single-host exports keep their
+        previous ids.
+        """
+        pid_text = as_text(pid)
+        if not pid_text:
+            return None
+        host = as_text(hostname).strip()
+        return f"{pid_text}@{host}" if host else pid_text
+
     def get_or_create_process_node(self, pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
+        # Returns the resolved node id so callers reuse it for their edges and
+        # for artifact ids that embed the owning process (host-scoped).
+        pid = self.process_node_id(pid, hostname)
         if not pid:
-            return
-        pid = str(pid)
+            return None
 
         display_name = name if name else "Unknown"
         label = f"{display_name}\n{pid}" if name else f"Process ID:\n{pid}"
@@ -239,6 +256,8 @@ class GraphBuilder:
                         node["title"] = parts[0] + f"\nHost: 🖥️ {hostname}\n\nObserved Actions:" + parts[1]
                     else:
                         node["title"] += f"\nHost: 🖥️ {hostname}"
+
+        return pid
 
     def add_or_update_artifact_node(self, node_id, label, new_details, group, raw_event=None):
         if not node_id:

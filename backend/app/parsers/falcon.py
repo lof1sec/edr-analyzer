@@ -15,15 +15,16 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                                "Unknown Process")).split('\\')[-1]
 
         if parent_id and target_id:
-            builder.get_or_create_process_node(
+            source_differs_from_parent = bool(source_id) and str(source_id) != str(parent_id)
+            parent_id = builder.get_or_create_process_node(
                 parent_id,
                 event.get("ParentBaseFileName"),
                 username,
                 hostname,
                 evt_type=evt_type,
-                raw_event=event)
-            builder.get_or_create_process_node(
-                target_id, image_file, username, hostname, evt_type, raw_event=event)
+                raw_event=event) or parent_id
+            target_id = builder.get_or_create_process_node(
+                target_id, image_file, username, hostname, evt_type, raw_event=event) or target_id
 
             builder.add_edge(
                 parent_id,
@@ -33,9 +34,9 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 evt_type,
                 raw_event=event)
 
-            if source_id and source_id != parent_id:
-                builder.get_or_create_process_node(
-                    source_id, None, username, hostname, evt_type=evt_type, raw_event=event)
+            if source_differs_from_parent:
+                source_id = builder.get_or_create_process_node(
+                    source_id, None, username, hostname, evt_type=evt_type, raw_event=event) or source_id
                 builder.add_edge(
                     source_id,
                     target_id,
@@ -69,8 +70,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or target_id
 
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, base_file, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, base_file, username, hostname, evt_type, event) or actor_ident
 
             ancestry_text = (
                 f"[{evt_type}]\n"
@@ -98,8 +99,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type == "AssociateIndicator":
         actor_ident = target_id or context_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             detect_name = event.get("DetectName", "Unknown Detection")
             severity = event.get("DetectSeverity", "0")
@@ -129,8 +130,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type in ["UserLogon", "UserIdentity", "IoSessionLoggedOn"]:
         actor_ident = context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             logon_type = event.get("LogonType", "Unknown")
             domain = event.get("LogonDomain", "")
@@ -176,8 +177,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
 
         if context_id and file_name:
-            builder.get_or_create_process_node(
-                context_id, actor_name, username, hostname, evt_type, event)
+            context_id = builder.get_or_create_process_node(
+                context_id, actor_name, username, hostname, evt_type, event) or context_id
 
             clean_path = file_name.replace('\\', '/')
             short_name = clean_path.rstrip('/').split('/')[-1]
@@ -210,8 +211,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
         actor_ident = context_id or source_id
         if actor_ident and file_name:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             clean_path = file_name.replace('\\', '/')
             short_name = clean_path.rstrip('/').split('/')[-1]
@@ -239,8 +240,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type == "SuspiciousCreateSymbolicLink":
         actor_ident = context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             symlink = as_text(event.get("SymbolicLinkName", ""))
             target = event.get("SymbolicLinkTarget", "")
@@ -270,8 +271,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = event.get(
             "RpcClientProcessId") or context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             tactic = event.get("Tactic", "N/A")
             technique = event.get("Technique", "N/A")
@@ -319,8 +320,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or source_id
         if actor_ident and driver_path:
             short_driver = driver_path.split('\\')[-1]
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             sha256 = event.get("SHA256HashData", "N/A")
             company = event.get("CompanyName", "Unknown Company")
@@ -347,8 +348,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             display_reg = raw_reg[:50] + \
                 "..." if len(raw_reg) > 50 else raw_reg
 
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             full_reg_info = f"[{evt_type}]\nKey: {reg_key}\nValue: {reg_value}"
 
             builder.add_or_update_artifact_node(
@@ -368,8 +369,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or source_id
 
         if actor_ident and (remote_ip or domain):
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             if evt_type == "DnsRequest":
                 dns_node_id = f"dns_{domain}"
@@ -492,8 +493,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         cmd_history = as_text(event.get("CommandHistory", ""))
         actor_ident = target_id or context_id
         if actor_ident and cmd_history:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
             wrapped_cmd = textwrap.fill(cmd_history, width=60)
 
@@ -515,10 +516,10 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         builder.unmapped_events.append(evt_type)
         actor_ident = context_id or source_id or parent_id
         if actor_ident and target_id and actor_ident != target_id:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
-            builder.get_or_create_process_node(
-                target_id, target_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+            target_id = builder.get_or_create_process_node(
+                target_id, target_name, username, hostname, evt_type, event) or target_id
             builder.add_edge(
                 actor_ident,
                 target_id,

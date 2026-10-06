@@ -113,8 +113,14 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    `ActionType`, Falcon uses `#event_simpleName`. Reuse
    `app/parsers/vendor.py` rather than hardcoding markers.
 2. **Graph ids must be stable and unique.**
-   - Node ids: `string_hash()` → sha1 truncated to 16 hex chars. **Never use
-     Python's built-in `hash()`** (salted per process).
+   - Process node ids are **host-scoped**: `pid@host` (bare `pid` when the event
+     has no host), built by `GraphBuilder.process_node_id`. A bare PID is only
+     unique per machine, so host-scoping stops the same PID on two hosts from
+     collapsing into one node. Parsers must reuse the id returned by
+     `get_or_create_process_node` for their edges and for artifact ids that
+     embed the owning process. `_timeline_element_ids` composes the same id.
+   - Artifact node ids: `string_hash()` → sha1 truncated to 16 hex chars.
+     **Never use Python's built-in `hash()`** (salted per process).
    - Edge ids: the `GraphBuilder._edge_seq` counter (`edge_1`, `edge_2`, …).
 3. **Uploads are streamed**, size-capped (`MAX_UPLOAD_SIZE_MB`), and inserted in
    batches (`INSERT_BATCH_SIZE`). Keep the memory-bounded pattern.
@@ -159,7 +165,7 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 
 ## Testing
 
-- Backend: `backend/tests/` (98 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (101 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).

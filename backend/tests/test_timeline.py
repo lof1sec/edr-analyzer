@@ -40,7 +40,7 @@ def test_timeline_orders_by_time_and_puts_undated_last(admin_client):
     assert first["iso"] is not None
     assert first["vendor"] == "defender"
     assert "svchost.exe" in first["summary"]
-    assert "600" in first["element_ids"]
+    assert "600@H1" in first["element_ids"]
 
 
 def test_timeline_pagination_and_filters(admin_client):

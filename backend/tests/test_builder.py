@@ -31,6 +31,25 @@ def test_process_nodes_are_keyed_by_pid():
     assert set(builder.nodes_dict) == {"42", "43"}
 
 
+def test_process_nodes_are_scoped_by_host():
+    """Regression: the same PID on two hosts must not collapse into one node."""
+    builder = GraphBuilder()
+    a = builder.get_or_create_process_node("100", "a.exe", hostname="hostA")
+    b = builder.get_or_create_process_node("100", "b.exe", hostname="hostB")
+
+    assert a == "100@hostA"
+    assert b == "100@hostB"
+    assert set(builder.nodes_dict) == {"100@hostA", "100@hostB"}
+
+
+def test_process_node_id_is_bare_without_host():
+    builder = GraphBuilder()
+    assert builder.process_node_id("7", None) == "7"
+    assert builder.process_node_id("7", "H1") == "7@H1"
+    assert builder.process_node_id(None, "H1") is None
+    assert builder.get_or_create_process_node("7", "c.exe") == "7"
+
+
 def test_elements_are_json_serialisable():
     builder = GraphBuilder()
     builder.get_or_create_process_node("42", "cmd.exe")
