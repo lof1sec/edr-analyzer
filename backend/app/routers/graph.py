@@ -1,3 +1,4 @@
+import os
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +22,135 @@ router = APIRouter(
     tags=["Graph"],
     dependencies=[Depends(require_user)],
 )
+
+# Above this many elements the initial graph payload is truncated and the rest
+# is served on demand via ``GET /{dataset_id}/elements``. Rendering tens of
+# thousands of Cytoscape elements in one go freezes the browser, so the initial
+# response keeps only the process-process backbone plus as many artifact leaves
+# as fit the budget. Set to 0 (or negative) to always ship the full graph.
+DEFAULT_MAX_INITIAL_ELEMENTS = 5000
+
+
+def _max_initial_elements() -> int:
+    """Read ``MAX_INITIAL_ELEMENTS`` at call time so tests can tune it per case."""
+    raw = os.getenv("MAX_INITIAL_ELEMENTS")
+    if raw is None:
+        return DEFAULT_MAX_INITIAL_ELEMENTS
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_INITIAL_ELEMENTS
+
+
+def _truncate_elements(nodes, edges, cap):
+    """Split a full graph payload into an initial view and an on-demand remainder.
+
+    Returns ``(nodes, edges, omitted_nodes, omitted_edges)``. The initial view
+    keeps every process node (trimmed to the highest-degree when they alone
+    exceed the budget) and their process-process edges, then fills the remaining
+    budget with artifact leaves and their edges to kept processes. Ordering is
+    deterministic (degree desc, then id asc) so the ``/elements`` pages are
+    stable across requests.
+    """
+    if cap <= 0 or len(nodes) + len(edges) <= cap:
+        return nodes, edges, [], []
+
+    process_ids = {n["data"]["id"] for n in nodes if n["data"].get("group") == "process"}
+    artifact_ids = sorted(
+        n["data"]["id"] for n in nodes if n["data"]["id"] not in process_ids
+    )
+
+    pp_edges = [
+        e for e in edges
+        if e["data"]["source"] in process_ids and e["data"]["target"] in process_ids
+    ]
+    pa_edges = [
+        e for e in edges
+        if (e["data"]["source"] in process_ids) != (e["data"]["target"] in process_ids)
+    ]
+
+    # Prefer the most-connected processes first so the truncated view keeps the
+    # graph's backbone rather than a random slice.
+    degree = {pid: 0 for pid in process_ids}
+    for e in pp_edges:
+        degree[e["data"]["source"]] += 1
+        degree[e["data"]["target"]] += 1
+    process_order = sorted(process_ids, key=lambda pid: (-degree.get(pid, 0), pid))
+
+    process_budget = max(cap // 2, 1)
+    selected_process = set(process_order[:process_budget])
+    selected_edge_ids = {
+        e["data"]["id"] for e in pp_edges
+        if e["data"]["source"] in selected_process and e["data"]["target"] in selected_process
+    }
+
+    # Map each artifact to its incident process<->artifact edges once, so filling
+    # the budget is O(pa_edges) instead of O(artifacts * pa_edges).
+    incident = {aid: [] for aid in artifact_ids}
+    for e in pa_edges:
+        s, t = e["data"]["source"], e["data"]["target"]
+        if s in incident:
+            incident[s].append(e)
+        if t in incident:
+            incident[t].append(e)
+
+    budget = cap - len(selected_process) - len(selected_edge_ids)
+    selected_artifacts = set()
+    for aid in artifact_ids:
+        if budget <= 0:
+            break
+
+        add_edges = [
+            e for e in incident[aid]
+            if (e["data"]["target"] if e["data"]["source"] == aid else e["data"]["source"])
+            in selected_process
+        ]
+        cost = 1 + len(add_edges)
+        if cost > budget:
+            continue
+        selected_artifacts.add(aid)
+        for e in add_edges:
+            selected_edge_ids.add(e["data"]["id"])
+        budget -= cost
+
+    selected_ids = selected_process | selected_artifacts
+    selected_nodes = [n for n in nodes if n["data"]["id"] in selected_ids]
+    selected_edges = [e for e in edges if e["data"]["id"] in selected_edge_ids]
+
+    omitted_nodes = sorted(
+        (n for n in nodes if n["data"]["id"] not in selected_ids),
+        key=lambda n: n["data"]["id"],
+    )
+    omitted_edges = sorted(
+        (e for e in edges if e["data"]["id"] not in selected_edge_ids),
+        key=lambda e: e["data"]["id"],
+    )
+    return selected_nodes, selected_edges, omitted_nodes, omitted_edges
+
+
+def _truncated_parts(payload: dict, cap: int):
+    """Return the initial view + omitted elements for ``payload``, memoised on it.
+
+    The full payload stays cached in ``graph_cache``; only the *view* delivered to
+    the browser is truncated. Memoising keeps the ``/elements`` pages from
+    re-sorting the whole element list on every request.
+    """
+    memo = payload.get("_truncation")
+    if memo is not None and memo["cap"] == cap:
+        return memo["nodes"], memo["edges"], memo["omitted_nodes"], memo["omitted_edges"]
+
+    elements = payload["elements"]
+    nodes, edges, omitted_nodes, omitted_edges = _truncate_elements(
+        elements["nodes"], elements["edges"], cap
+    )
+    payload["_truncation"] = {
+        "cap": cap,
+        "nodes": nodes,
+        "edges": edges,
+        "omitted_nodes": omitted_nodes,
+        "omitted_edges": omitted_edges,
+    }
+    return nodes, edges, omitted_nodes, omitted_edges
 
 
 def _build_graph_payload(dataset_id: int, db: Session) -> dict:
@@ -90,9 +220,62 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
     # in-browser graph stay small; they are fetched on demand below. Unmapped
     # events are aggregated to counts so the payload does not carry one entry
     # per event.
+    nodes, edges, omitted_nodes, omitted_edges = _truncated_parts(
+        payload, _max_initial_elements()
+    )
     return {
-        "elements": payload["elements"],
+        "elements": {"nodes": nodes, "edges": edges},
         "unmapped_events": dict(Counter(payload["unmapped_events"])),
+        "truncated": bool(omitted_nodes or omitted_edges),
+        "total_nodes": len(payload["elements"]["nodes"]),
+        "total_edges": len(payload["elements"]["edges"]),
+    }
+
+
+@router.get("/{dataset_id}/elements")
+def get_elements(
+    dataset_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    """Return a page of the elements omitted from the truncated initial view.
+
+    Nodes are paged in stable id order; an edge is emitted on the page that
+    loads the *later* of its two endpoints, and only once both endpoints are
+    already loaded (either in the initial view or an earlier page), so the client
+    never receives a dangling edge.
+    """
+    payload = _get_graph_payload(dataset_id, db)
+    _, _, omitted_nodes, omitted_edges = _truncated_parts(
+        payload, _max_initial_elements()
+    )
+
+    if not omitted_nodes:
+        return {"nodes": [], "edges": [], "offset": offset, "limit": limit, "remaining": 0}
+
+    end = min(offset + limit, len(omitted_nodes))
+    nodes_page = omitted_nodes[offset:end]
+
+    initial_ids = {
+        n["data"]["id"] for n in payload["elements"]["nodes"]
+    } - {n["data"]["id"] for n in omitted_nodes}
+    loaded_ids = initial_ids | {n["data"]["id"] for n in omitted_nodes[:end]}
+    page_ids = {n["data"]["id"] for n in nodes_page}
+
+    edges_page = [
+        e for e in omitted_edges
+        if e["data"]["source"] in loaded_ids
+        and e["data"]["target"] in loaded_ids
+        and (e["data"]["source"] in page_ids or e["data"]["target"] in page_ids)
+    ]
+
+    return {
+        "nodes": nodes_page,
+        "edges": edges_page,
+        "offset": offset,
+        "limit": limit,
+        "remaining": len(omitted_nodes) - end,
     }
 
 

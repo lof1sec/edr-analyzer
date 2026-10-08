@@ -125,6 +125,12 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   const [baseElementCount, setBaseElementCount] = useState(0);
   // cluster_id -> { node, edge, memberIds, memberEdgeIds } for the expanded set.
   const [expandedClusters, setExpandedClusters] = useState({});
+  // Large graphs are truncated server-side: these track the initial view vs the
+  // full element count and drive the "load more" pager.
+  const [truncated, setTruncated] = useState(false);
+  const [totalElements, setTotalElements] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const omittedOffsetRef = useRef(0);
   const cyRef = useRef(null);
   const initialPositions = useRef({});
   const isRightPaneOpenRef = useRef(true);
@@ -250,6 +256,10 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         setBaseElementCount(cyElements.length);
         setElements(cyElements);
         setUnmappedEvents(data.unmapped_events || {});
+        setTruncated(Boolean(data.truncated));
+        setTotalElements((data.total_nodes || 0) + (data.total_edges || 0));
+        omittedOffsetRef.current = 0;
+        setLoadingMore(false);
       } catch (err) {
         console.error(err);
         setError(err?.message || 'Failed to load the graph.');
@@ -507,6 +517,74 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       };
     });
   };
+
+  // Fetch the next page of elements omitted from the truncated initial view and
+  // append them without re-running the layout (baseElementCount is left alone,
+  // so the memoised layout object stays the same). New nodes are fanned out
+  // around the current viewport centre instead of piling up at (0, 0).
+  const loadMoreElements = useCallback(async () => {
+    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.getGraphElements(datasetIdRef.current, {
+        offset: omittedOffsetRef.current,
+        limit: 500,
+      });
+      const cy = cyRef.current;
+      let center = { x: 0, y: 0 };
+      if (cy) {
+        const ext = cy.extent();
+        center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
+      }
+      const nodes = res.nodes || [];
+      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...(res.edges || [])]);
+      omittedOffsetRef.current += nodes.length;
+      if ((res.remaining ?? 0) === 0) setTruncated(false);
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || 'Could not load more elements.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, truncated]);
+
+  // Load *every* remaining element, paging until nothing is left. Offered by the
+  // "Cargar todos" button, which only shows while the user is searching or has
+  // filtered the graph, when seeing the whole element set actually matters.
+  const loadAllElements = useCallback(async () => {
+    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    setLoadingMore(true);
+    try {
+      const nodes = [];
+      const edges = [];
+      let offset = omittedOffsetRef.current;
+      while (true) {
+        const res = await api.getGraphElements(datasetIdRef.current, {
+          offset,
+          limit: 1000,
+        });
+        const pageNodes = res.nodes || [];
+        nodes.push(...pageNodes);
+        edges.push(...(res.edges || []));
+        offset += pageNodes.length;
+        if ((res.remaining ?? 0) === 0 || pageNodes.length === 0) break;
+      }
+      const cy = cyRef.current;
+      let center = { x: 0, y: 0 };
+      if (cy) {
+        const ext = cy.extent();
+        center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
+      }
+      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...edges]);
+      omittedOffsetRef.current = offset;
+      setTruncated(false);
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || 'Could not load all elements.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, truncated]);
 
   const expandCluster = useCallback(async (clusterId) => {
     const cy = cyRef.current;
@@ -780,6 +858,15 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
 
   const searchHasNoMatches = Boolean(searchQuery && matchedIds && matchedIds.size === 0);
 
+  // "Cargar todos" is offered whenever the user is actively narrowing the graph:
+  // a global search term, or at least one checkbox hidden in the Event Types,
+  // Users or PIDs filters. Only then does loading the full set matter.
+  const showLoadAll =
+    Boolean(searchQuery) ||
+    Object.values(eventTypes).some((value) => value === false) ||
+    Object.values(users).some((value) => value === false) ||
+    Object.values(pids).some((value) => value === false);
+
   return (
     <div className="flex-1 flex relative overflow-hidden w-full h-full">
 
@@ -858,6 +945,33 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
             </div>
           ))}
         </div>
+
+        {/* Truncated-graph notice + pager */}
+        {truncated && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-slate-200 dark:border-slate-700 rounded shadow px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+            <span>
+              Mostrando {elements.length} de {totalElements} elementos
+            </span>
+            {showLoadAll ? (
+              <button
+                onClick={loadAllElements}
+                disabled={loadingMore}
+                title="Cargar todos los elementos restantes"
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
+              >
+                {loadingMore ? 'Cargando…' : 'Cargar todos'}
+              </button>
+            ) : (
+              <button
+                onClick={loadMoreElements}
+                disabled={loadingMore}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
+              >
+                {loadingMore ? 'Cargando…' : `Cargar más (${totalElements - elements.length})`}
+              </button>
+            )}
+          </div>
+        )}
 
         <CytoscapeComponent
           elements={elements}

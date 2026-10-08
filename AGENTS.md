@@ -64,6 +64,7 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 | `GRAPH_CACHE_SIZE` | Generated-graph cache entries (default `4`) |
 | `GRAPH_CACHE_TTL_SECONDS` | Cached graph lifetime, seconds (default `300`; `0` disables) |
 | `CLUSTER_MIN_CHILDREN` | Exclusively-owned descendants a hub needs before they are collapsed into a cluster placeholder (default `50`; `0` disables clustering) |
+| `MAX_INITIAL_ELEMENTS` | Max nodes+edges shipped in the initial graph payload; larger graphs are truncated and the rest is served on demand via `/api/graph/{id}/elements` (default `5000`; `0` disables truncation) |
 | `SECRET_KEY` | Signs session cookies; unset → ephemeral key (sessions lost on restart) |
 | `SESSION_COOKIE_SECURE` | `true` restricts the session cookie to HTTPS (default `false`) |
 
@@ -86,7 +87,9 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
   lazy raw-log/search/cluster/neighbour endpoints, the chronological timeline,
-  saved-layout read/write, and cache-backed payloads.
+  saved-layout read/write, and cache-backed payloads. The initial payload is
+  truncated to `MAX_INITIAL_ELEMENTS` (backbone + artifacts) and the remainder
+  is served on demand by `GET /{dataset_id}/elements`.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
   generated graphs; invalidated on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).

@@ -71,6 +71,10 @@ export const api = {
   // Graph
   getGraph: (id) => request(`/api/graph/${id}`),
 
+  getGraphElements: (id, { offset = 0, limit = 500 } = {}) =>
+    request(`/api/graph/${id}/elements?offset=${offset}&limit=${limit}`),
+
+
   getElementLogs: (id, elementId) =>
     request(`/api/graph/${id}/element-logs?element_id=${encodeURIComponent(elementId)}`),
 
