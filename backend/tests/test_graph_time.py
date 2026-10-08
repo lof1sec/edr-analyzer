@@ -94,3 +94,38 @@ def test_time_range_endpoint_ignores_undated_events(admin_client):
 
 def test_time_range_endpoint_for_missing_dataset_returns_404(admin_client):
     assert admin_client.get("/api/graph/999999/time-range").status_code == 404
+
+
+def test_elements_expose_first_and_last_event_time(admin_client):
+    rows = (
+        b"FileCreated,H1,2026-10-05T12:00:00Z,600,,svchost.exe,file0.dll\n"
+        b"FileCreated,H1,2026-10-05T12:10:00Z,600,,svchost.exe,file1.dll\n"
+    )
+    dataset_id = _upload(admin_client, _HEADER + rows).json()["dataset_id"]
+
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    nodes = {n["data"]["id"]: n["data"] for n in graph["elements"]["nodes"]}
+
+    hub = nodes["600@H1"]
+    assert hub["first_time"] == _ms("2026-10-05T12:00:00+00:00")
+    assert hub["last_time"] == _ms("2026-10-05T12:10:00+00:00")
+
+    # A file artifact saw a single event, so first == last.
+    f0 = nodes["file0.dll"]
+    assert f0["first_time"] == f0["last_time"] == _ms("2026-10-05T12:00:00+00:00")
+
+    # Edges carry the time of their own event.
+    edge_data = [e["data"] for e in graph["elements"]["edges"]]
+    assert edge_data
+    assert all(e.get("first_time") == e.get("last_time") is not None for e in edge_data)
+
+
+def test_undated_elements_have_no_time(admin_client):
+    rows = b"FileCreated,H1,,600,,svchost.exe,undated.dll\n"
+    dataset_id = _upload(admin_client, _HEADER + rows).json()["dataset_id"]
+
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    nodes = {n["data"]["id"]: n["data"] for n in graph["elements"]["nodes"]}
+    assert "first_time" not in nodes["600@H1"]
+    assert "first_time" not in nodes["undated.dll"]
+

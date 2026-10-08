@@ -50,6 +50,27 @@ def test_process_node_id_is_bare_without_host():
     assert builder.get_or_create_process_node("7", "c.exe") == "7"
 
 
+def test_process_node_shows_bare_pid_while_id_stays_host_scoped():
+    """Display uses the bare PID; the node id stays host-scoped for uniqueness."""
+    builder = GraphBuilder()
+    node_id = builder.get_or_create_process_node("100", "a.exe", hostname="hostA")
+
+    assert node_id == "100@hostA"
+    node = builder.nodes_dict["100@hostA"]
+    assert node["pid"] == "100"
+    # Label/title show the bare PID (host is on its own line)...
+    assert "100" in node["label"]
+    assert "100@hostA" not in node["label"]
+    assert "PID: 100" in node["title"]
+    assert "100@hostA" not in node["title"]
+    assert "🖥️ hostA" in node["label"]
+
+    # ...and data exposes the bare pid for the frontend filter.
+    payload = builder.build_cytoscape_elements()
+    data = next(n["data"] for n in payload["elements"]["nodes"] if n["data"]["id"] == "100@hostA")
+    assert data["pid"] == "100"
+
+
 def test_elements_are_json_serialisable():
     builder = GraphBuilder()
     builder.get_or_create_process_node("42", "cmd.exe")

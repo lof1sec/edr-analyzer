@@ -98,13 +98,23 @@ def _cluster_min_children() -> int:
         return DEFAULT_CLUSTER_MIN_CHILDREN
 
 
-def _append_raw_log(container: dict, raw_event) -> None:
+def _append_raw_log(container: dict, raw_event, event_time=None) -> None:
     """Record ``raw_event`` as evidence and add it to the search haystack.
 
     The retained raw logs are capped at ``MAX_RAW_LOGS_PER_ELEMENT``, but every
     event also contributes to ``_search_text`` (bounded) so searching is not
     silently limited to the retained events.
+
+    ``event_time`` (normalized epoch ms) is folded into the element's
+    ``first_time``/``last_time`` so the details pane can show when the element was
+    first and last observed. It is ignored when ``None`` (undated events).
     """
+    if event_time is not None:
+        first = container.get("first_time")
+        container["first_time"] = event_time if first is None else min(first, event_time)
+        last = container.get("last_time")
+        container["last_time"] = event_time if last is None else max(last, event_time)
+
     if not raw_event:
         return
     container["raw_logs_total"] = container.get("raw_logs_total", 0) + 1
@@ -149,6 +159,11 @@ class GraphBuilder:
         self.edges_list = []
         self.unmapped_events = []
         self._edge_seq = 0
+        # Normalized event time (epoch ms) of the event currently being parsed;
+        # set by the graph builder per event and read by ``_append_raw_log`` to
+        # stamp each element's first/last observation time. ``None`` for undated
+        # events or when the parsers are driven directly (tests).
+        self.current_event_time = None
 
     def process_node_id(self, pid, hostname=None):
         """Stable id for a process node, namespaced by its host.
@@ -168,19 +183,22 @@ class GraphBuilder:
     def get_or_create_process_node(self, pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
         # Returns the resolved node id so callers reuse it for their edges and
         # for artifact ids that embed the owning process (host-scoped).
+        # ``pid_text`` is the bare PID shown to the user; the node *id* stays
+        # host-scoped to keep the same PID on two hosts from collapsing.
+        pid_text = as_text(pid)
         pid = self.process_node_id(pid, hostname)
         if not pid:
             return None
 
         display_name = name if name else "Unknown"
-        label = f"{display_name}\n{pid}" if name else f"Process ID:\n{pid}"
+        label = f"{display_name}\n{pid_text}" if name else f"Process ID:\n{pid_text}"
         if username:
             icon = "💻" if str(username).endswith("$") else "👤"
             label += f"\n{icon} {username}"
         if hostname:
             label += f"\n🖥️ {hostname}"
 
-        title = f"Process Name: {display_name}\nPID: {pid}"
+        title = f"Process Name: {display_name}\nPID: {pid_text}"
         if username:
             icon = "💻" if str(username).endswith("$") else "👤"
             title += f"\nUser: {icon} {username}"
@@ -194,6 +212,7 @@ class GraphBuilder:
 
             self.nodes_dict[pid] = {
                 "id": pid,
+                "pid": pid_text,
                 "label": label,
                 "group": "process",
                 "title": title,
@@ -204,7 +223,7 @@ class GraphBuilder:
                 "raw_logs": [],
                 "raw_logs_total": 0,
             }
-            _append_raw_log(self.nodes_dict[pid], raw_event)
+            _append_raw_log(self.nodes_dict[pid], raw_event, self.current_event_time)
         else:
             node = self.nodes_dict[pid]
             current_label = node.get("label", "")
@@ -214,7 +233,7 @@ class GraphBuilder:
             current_name = node.get("process_name")
             actions_list = node.get("actions", [])
 
-            _append_raw_log(node, raw_event)
+            _append_raw_log(node, raw_event, self.current_event_time)
 
             if evt_type and evt_type not in actions_list:
                 actions_list.append(evt_type)
@@ -273,10 +292,10 @@ class GraphBuilder:
                 "raw_logs": [],
                 "raw_logs_total": 0,
             }
-            _append_raw_log(self.nodes_dict[node_id], raw_event)
+            _append_raw_log(self.nodes_dict[node_id], raw_event, self.current_event_time)
         else:
             current_title = self.nodes_dict[node_id].get("title", "")
-            _append_raw_log(self.nodes_dict[node_id], raw_event)
+            _append_raw_log(self.nodes_dict[node_id], raw_event, self.current_event_time)
 
             if new_details not in current_title:
                 separator = "\n\n" + "="*40 + "\n\n"
@@ -302,7 +321,7 @@ class GraphBuilder:
             "raw_logs": [],
             "raw_logs_total": 0,
         }
-        _append_raw_log(edge, raw_event)
+        _append_raw_log(edge, raw_event, self.current_event_time)
         self.edges_list.append(edge)
 
     def _plan_clusters(self):

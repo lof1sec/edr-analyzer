@@ -73,7 +73,9 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 Data flow: **upload → parse → store (Postgres JSONB) → build graph → render**.
 
 - `backend/app/parsers/vendor.py` — vendor / event-type detection from fields.
-- `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests.
+- `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests,
+  per-element `first_time`/`last_time` (epoch ms of the earliest/latest event on
+  an element, shown in Node Details).
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
 - `backend/app/parsers/events.py` — shared per-vendor actor/target/user/host
   extraction (`describe_event`), used by the graph builder and the timeline.
@@ -126,6 +128,10 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
      collapsing into one node. Parsers must reuse the id returned by
      `get_or_create_process_node` for their edges and for artifact ids that
      embed the owning process. `_timeline_element_ids` composes the same id.
+   - The **displayed** PID (node `label`/`title` and the `pid` field in `data`)
+     is the bare `pid`; only the *id* stays host-scoped. So the UI shows `600`
+     while the same PID on two hosts remains two distinct nodes (the host is
+     still rendered on its own `🖥️` line).
    - Artifact node ids: `string_hash()` → sha1 truncated to 16 hex chars.
      **Never use Python's built-in `hash()`** (salted per process).
    - Edge ids: the `GraphBuilder._edge_seq` counter (`edge_1`, `edge_2`, …).

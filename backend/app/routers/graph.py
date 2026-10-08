@@ -186,6 +186,9 @@ def _build_graph_payload(
     for log in logs:
         event = log.data
         evt_type = log.event_type
+        # Stamp this event's normalized time so elements record when they were
+        # first/last observed (the details pane shows it).
+        builder.current_event_time = log.event_time
 
         # Vendor is detected per event, so a dataset can safely mix exports.
         vendor = get_vendor(event)

@@ -49,6 +49,14 @@ function formatRange(ms) {
   return new Date(ms).toLocaleString();
 }
 
+// dd/mm/yyyy, HH:MM:SS in the user's local timezone (for element timestamps).
+function formatDateTime(ms) {
+  if (ms == null) return null;
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0) {
   const large = elementCount > LARGE_GRAPH_THRESHOLD;
   switch (mode) {
@@ -933,7 +941,9 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     .filter((usr) => usr.toLowerCase().includes(userSearch.toLowerCase()));
   const pidLabel = (pid) => {
     const node = elementsById.get(pid);
-    return node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
+    // Display the bare PID (data.pid); the map stays keyed by the host-scoped id.
+    const barePid = (node && node.data.pid) || pid;
+    return node && node.data.process_name ? `${node.data.process_name} (${barePid})` : barePid;
   };
   const filteredPids = Object.keys(pids)
     .sort()
@@ -1216,6 +1226,24 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
                     )}
                   </div>
                 </div>
+
+                {(selectedNode.first_time != null || selectedNode.last_time != null) && (
+                  <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
+                    {selectedNode.first_time != null && (
+                      <p>
+                        <span className="font-semibold">Time:</span>{' '}
+                        {formatDateTime(selectedNode.first_time)}
+                      </p>
+                    )}
+                    {selectedNode.last_time != null &&
+                      selectedNode.last_time !== selectedNode.first_time && (
+                        <p>
+                          <span className="font-semibold">Last activity:</span>{' '}
+                          {formatDateTime(selectedNode.last_time)}
+                        </p>
+                      )}
+                  </div>
+                )}
 
                 <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
                   <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>

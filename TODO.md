@@ -123,6 +123,67 @@ start/end, sin perder la búsqueda global.
 
 ---
 
+## Tiempo del elemento en Node Details — ✅ HECHO
+
+**Estado:** implementado. El panel de detalles muestra cuándo se observó por
+primera y por última vez el nodo/edge seleccionado.
+
+**Objetivo:** ver el instante del elemento seleccionado en formato
+`dd/mm/yyyy, HH:MM:SS`.
+
+### Backend
+
+- [x] **`first_time`/`last_time` por elemento**: `_append_raw_log` (punto único
+      donde cada evento se adjunta a un nodo/arista) registra el `min`/`max` de
+      `event_time`, ignorando los eventos sin fecha. `backend/app/parsers/builder.py`.
+- [x] **Tiempo por evento**: `GraphBuilder.current_event_time` se fija en
+      `_build_graph_payload` con `log.event_time` antes de cada `parse(...)`.
+      `backend/app/routers/graph.py`.
+- [x] **Sin raw logs en `elements`** (invariante 8): solo se añade el epoch ms
+      normalizado a `data`, no el evento crudo.
+
+### Frontend
+
+- [x] **Fila "Time"** en Node Details (primera aparición) y **"Last activity"**
+      solo cuando difiere de la primera. `frontend/src/components/GraphView.jsx`.
+- [x] **Formato** `dd/mm/yyyy, HH:MM:SS` en zona horaria local.
+- [x] Elementos sin eventos con fecha: no se muestra nada de tiempo.
+
+### Testing
+
+- `backend/tests/test_graph_time.py`: `first_time`/`last_time` de nodo/arista con
+  varios eventos y ausencia de tiempo en elementos sin fecha.
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
+## Visualización del PID de proceso sin host — ✅ HECHO
+
+**Estado:** implementado. Los nodos proceso muestran solo el PID (`600`) en vez
+de `pid@host` (`600@H1`); el host sigue en su propia línea `🖥️ H1`.
+
+**Objetivo:** quitar el ruido del sufijo `@host` en la etiqueta/título del nodo.
+
+### Cambios
+
+- [x] **`backend/app/parsers/builder.py`** (`get_or_create_process_node`):
+      `label`/`title` usan el PID pelado (`data.pid`); el **id** del nodo sigue
+      siendo `pid@host` (invariante 2 intacto: sin colisiones entre hosts ni
+      migración de layouts).
+- [x] **`frontend/src/components/GraphView.jsx`**: el filtro "Process IDs (PIDs)"
+      muestra `process_name (600)` usando `data.pid`; el mapa `pids` sigue
+      claveado por `id` (la lógica de ocultar no cambia).
+- [x] **Timeline** (`_timeline_element_ids`) sin cambios: sigue componiendo
+      `pid@host` para enfocar el nodo correcto.
+
+### Testing
+
+- `backend/tests/test_builder.py`: el id sigue `100@hostA`, `data.pid == "100"` y
+  `label`/`title` muestran `100` (no `100@hostA`).
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
 ## Detección de patrones sospechosos + risk score
 
 **Estado:** planificado (sin implementar). Es la siguiente idea fuera del punto 3.
