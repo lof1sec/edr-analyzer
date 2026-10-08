@@ -104,6 +104,25 @@ def test_defender_powershell_command_uses_dark_orange_exec_style():
     assert edge["data"]["color"] == "#c2410c"
 
 
+def test_falcon_registry_numeric_value_does_not_crash():
+    """Regression: a numeric ``RegValueName`` used to hit ``len(int)``."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "RegValueCommit",
+            "ContextProcessId": "900",
+            "RegObjectName": r"\Registry\Machine\Software\X",
+            "RegValueName": 1,
+        },
+        "RegValueCommit", "900", "reg.exe", None, None, None, "H1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    reg_nodes = [n for n in payload["elements"]["nodes"] if n["data"]["group"] == "registry"]
+    assert len(reg_nodes) == 1
+
+
 def test_falcon_command_history_uses_dark_orange_exec_style():
     builder = GraphBuilder()
     parse_falcon_event(
@@ -122,3 +141,224 @@ def test_falcon_command_history_uses_dark_orange_exec_style():
 
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "History")
     assert edge["data"]["color"] == "#c2410c"
+
+
+def test_same_pid_on_different_hosts_creates_distinct_process_nodes():
+    """Regression: a bare PID is unique per host, not globally (host-scoped ids)."""
+    builder = GraphBuilder()
+    parse_defender_event(
+        builder,
+        {
+            "ActionType": "ProcessCreated",
+            "InitiatingProcessId": "100",
+            "ProcessId": "200",
+            "InitiatingProcessFileName": "a.exe",
+            "FileName": "b.exe",
+            "DeviceName": "hostA",
+        },
+        "ProcessCreated", "100", "a.exe", "200", "b.exe", "u", "hostA",
+    )
+    parse_defender_event(
+        builder,
+        {
+            "ActionType": "ProcessCreated",
+            "InitiatingProcessId": "100",
+            "ProcessId": "200",
+            "InitiatingProcessFileName": "c.exe",
+            "FileName": "d.exe",
+            "DeviceName": "hostB",
+        },
+        "ProcessCreated", "100", "c.exe", "200", "d.exe", "u", "hostB",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert {"100@hostA", "200@hostA", "100@hostB", "200@hostB"} <= node_ids
+
+    # Every edge points at an existing node (no phantom endpoints).
+    for edge in payload["elements"]["edges"]:
+        assert edge["data"]["source"] in node_ids
+        assert edge["data"]["target"] in node_ids
+
+
+def test_falcon_script_control_scan_maps_script_as_file():
+    """ScriptControlScanInfo: the scanned script becomes a file artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "ScriptControlScanInfo",
+            "ContextProcessId": "1791226316986324238",
+            "ScriptContentName": "/home/acme/py_setup.py",
+            "ScriptContent": "#!/usr/libexec/platform-python\n",
+            "ContentSHA256HashData": (
+                "aa376eada2bee4aafe99b1fbd3f5d170ba27e7f9c3c9b0dbcefb06cba63c33df"
+            ),
+            "ComputerName": "acme-lnx",
+        },
+        "ScriptControlScanInfo",
+        "1791226316986324238", None, None, None, None, "acme-lnx",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1791226316986324238@acme-lnx" in node_ids
+
+    script = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "file")
+    assert script["data"]["label"] == "py_setup.py"
+    assert "py_setup.py" in script["data"]["title"]
+    assert "aa376e" in script["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Runs Script")
+    assert edge["data"]["source"] == "1791226316986324238@acme-lnx"
+    assert edge["data"]["target"] == script["data"]["id"]
+
+
+def test_falcon_create_socket_maps_network_artifact():
+    """CreateSocket: the socket becomes a network artifact of the process."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CreateSocket",
+            "ContextProcessId": "1234",
+            "AddressFamily": "2",
+            "SocketType": "1",
+            "Protocol": "6",
+            "ImageFileName": "/usr/bin/curl",
+            "ComputerName": "lnx1",
+        },
+        "CreateSocket",
+        "1234", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1234@lnx1" in node_ids
+
+    socket = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "network")
+    assert socket["data"]["label"] == "Socket: TCP/STREAM"
+    assert "Socket Type: STREAM" in socket["data"]["title"]
+    assert "Protocol: TCP" in socket["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Creates Socket")
+    assert edge["data"]["source"] == "1234@lnx1"
+    assert edge["data"]["target"] == socket["data"]["id"]
+
+
+def test_falcon_critical_file_accessed_maps_file_artifact():
+    """CriticalFileAccessed: the accessed file becomes a file artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CriticalFileAccessed",
+            "ContextProcessId": "4321",
+            "TargetFileName": "/etc/shadow",
+            "UID": "0",
+            "GID": "0",
+            "UnixMode": "0640",
+            "ComputerName": "lnx1",
+        },
+        "CriticalFileAccessed",
+        "4321", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "4321@lnx1" in node_ids
+
+    file_node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "file")
+    assert file_node["data"]["label"] == "shadow"
+    assert "/etc/shadow" in file_node["data"]["title"]
+    assert "UID: 0" in file_node["data"]["title"]
+    assert "Unix Mode: 0640" in file_node["data"]["title"]
+
+    edge = next(
+        e for e in payload["elements"]["edges"]
+        if e["data"]["label"] == "Accesses Critical File"
+    )
+    assert edge["data"]["source"] == "4321@lnx1"
+    assert edge["data"]["target"] == file_node["data"]["id"]
+
+
+def test_falcon_network_link_config_registers_process_only():
+    """NetworkLinkConfigGetAddress only carries the process: no artifact/edge."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "NetworkLinkConfigGetAddress",
+            "ContextProcessId": "1111",
+            "ComputerName": "lnx1",
+        },
+        "NetworkLinkConfigGetAddress",
+        "1111", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "1111@lnx1" in node_ids
+    assert payload["elements"]["edges"] == []
+    assert builder.unmapped_events == []
+
+
+def test_falcon_critical_env_var_changed_maps_config_artifact():
+    """CriticalEnvironmentVariableChanged: name/value become a config artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CriticalEnvironmentVariableChanged",
+            "ContextProcessId": "2222",
+            "EnvironmentVariableName": "LD_PRELOAD",
+            "EnvironmentVariableValue": "/tmp/evil.so",
+            "ComputerName": "lnx1",
+        },
+        "CriticalEnvironmentVariableChanged",
+        "2222", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "2222@lnx1" in node_ids
+
+    env = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "registry")
+    assert env["data"]["label"] == "Env: LD_PRELOAD"
+    assert "/tmp/evil.so" in env["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Sets Env Var")
+    assert edge["data"]["source"] == "2222@lnx1"
+    assert edge["data"]["target"] == env["data"]["id"]
+
+
+def test_falcon_network_listen_maps_local_endpoint():
+    """NetworkListenIP4: the listening endpoint becomes a network artifact."""
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "NetworkListenIP4",
+            "ContextProcessId": "3333",
+            "LocalAddressIP4": "0.0.0.0",
+            "LocalPort": "4444",
+            "Protocol": "6",
+            "ConnectionDirection": "1",
+            "ComputerName": "lnx1",
+        },
+        "NetworkListenIP4",
+        "3333", None, None, None, None, "lnx1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node_ids = {n["data"]["id"] for n in payload["elements"]["nodes"]}
+    assert "3333@lnx1" in node_ids
+
+    endpoint = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "network")
+    assert endpoint["data"]["id"] == "0.0.0.0:4444"
+    assert "Protocol: TCP" in endpoint["data"]["title"]
+    assert "Direction: INBOUND" in endpoint["data"]["title"]
+
+    edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Listens On")
+    assert edge["data"]["source"] == "3333@lnx1"
+    assert edge["data"]["target"] == endpoint["data"]["id"]

@@ -31,17 +31,17 @@ def test_upload_list_graph_search_element_logs_and_delete_flow(admin_client):
     graph = admin_client.get(f"/api/graph/{dataset_id}").json()
     assert graph["unmapped_events"] == {}
     node_ids = [n["data"]["id"] for n in graph["elements"]["nodes"]]
-    assert "600" in node_ids
+    assert "600@H1" in node_ids
 
     logs = admin_client.get(
-        f"/api/graph/{dataset_id}/element-logs", params={"element_id": "600"}
+        f"/api/graph/{dataset_id}/element-logs", params={"element_id": "600@H1"}
     ).json()
     assert logs["returned"] >= 1
 
     found = admin_client.get(
         f"/api/graph/{dataset_id}/search", params={"q": "svchost"}
     ).json()
-    assert "600" in found["ids"]
+    assert "600@H1" in found["ids"]
 
     assert admin_client.delete(f"/api/datasets/{dataset_id}").status_code == 200
     assert admin_client.get(f"/api/graph/{dataset_id}").status_code == 404
@@ -139,8 +139,8 @@ def test_neighbors_endpoint_returns_subgraph(admin_client):
     ).json()["dataset_id"]
 
     neighbors = admin_client.get(
-        f"/api/graph/{dataset_id}/neighbors", params={"element_id": "600"}
+        f"/api/graph/{dataset_id}/neighbors", params={"element_id": "600@H1"}
     ).json()
     ids = {node["data"]["id"] for node in neighbors["nodes"]}
-    assert "600" in ids
+    assert "600@H1" in ids
     assert "evil.dll" in ids

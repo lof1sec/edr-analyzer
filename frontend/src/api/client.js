@@ -41,6 +41,21 @@ function postJson(path, body) {
   });
 }
 
+/**
+ * Build a URL with a query string from `params`, skipping null/undefined/empty
+ * values (so an inactive time filter adds nothing). `0` is kept.
+ */
+function buildQuery(path, params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const qs = search.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 export const api = {
   // Authentication
   authStatus: () => request('/api/auth/status'),
@@ -69,21 +84,25 @@ export const api = {
     request(`/api/datasets/${id}`, { method: 'DELETE' }),
 
   // Graph
-  getGraph: (id) => request(`/api/graph/${id}`),
+  getGraph: (id, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}`, { from, to })),
 
-  getElementLogs: (id, elementId) =>
-    request(`/api/graph/${id}/element-logs?element_id=${encodeURIComponent(elementId)}`),
+  getGraphElements: (id, { offset = 0, limit = 500, from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/elements`, { offset, limit, from, to })),
+
+  getTimeRange: (id) => request(`/api/graph/${id}/time-range`),
+
+  getElementLogs: (id, elementId, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/element-logs`, { element_id: elementId, from, to })),
 
   searchGraph: (id, query) =>
     request(`/api/graph/${id}/search?q=${encodeURIComponent(query)}`),
 
-  getCluster: (id, clusterId) =>
-    request(`/api/graph/${id}/clusters/${encodeURIComponent(clusterId)}`),
+  getCluster: (id, clusterId, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/clusters/${encodeURIComponent(clusterId)}`, { from, to })),
 
-  getNeighbors: (id, elementId, depth = 1) =>
-    request(
-      `/api/graph/${id}/neighbors?element_id=${encodeURIComponent(elementId)}&depth=${depth}`
-    ),
+  getNeighbors: (id, elementId, depth = 1, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/neighbors`, { element_id: elementId, depth, from, to })),
 
   getLayout: (id) => request(`/api/graph/${id}/layout`),
 

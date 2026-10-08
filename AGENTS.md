@@ -64,6 +64,7 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 | `GRAPH_CACHE_SIZE` | Generated-graph cache entries (default `4`) |
 | `GRAPH_CACHE_TTL_SECONDS` | Cached graph lifetime, seconds (default `300`; `0` disables) |
 | `CLUSTER_MIN_CHILDREN` | Exclusively-owned descendants a hub needs before they are collapsed into a cluster placeholder (default `50`; `0` disables clustering) |
+| `MAX_INITIAL_ELEMENTS` | Max nodes+edges shipped in the initial graph payload; larger graphs are truncated and the rest is served on demand via `/api/graph/{id}/elements` (default `5000`; `0` disables truncation) |
 | `SECRET_KEY` | Signs session cookies; unset → ephemeral key (sessions lost on restart) |
 | `SESSION_COOKIE_SECURE` | `true` restricts the session cookie to HTTPS (default `false`) |
 
@@ -72,7 +73,9 @@ is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 Data flow: **upload → parse → store (Postgres JSONB) → build graph → render**.
 
 - `backend/app/parsers/vendor.py` — vendor / event-type detection from fields.
-- `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests.
+- `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests,
+  per-element `first_time`/`last_time` (epoch ms of the earliest/latest event on
+  an element, shown in Node Details).
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
 - `backend/app/parsers/events.py` — shared per-vendor actor/target/user/host
   extraction (`describe_event`), used by the graph builder and the timeline.
@@ -86,9 +89,15 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/routers/datasets.py` — upload (streamed), list, delete.
 - `backend/app/routers/graph.py` — graph generation (ordered, per-event vendor),
   lazy raw-log/search/cluster/neighbour endpoints, the chronological timeline,
-  saved-layout read/write, and cache-backed payloads.
+  saved-layout read/write, and cache-backed payloads. The initial payload is
+  truncated to `MAX_INITIAL_ELEMENTS` (backbone + artifacts) and the remainder
+  is served on demand by `GET /{dataset_id}/elements`. Graph endpoints accept an
+  optional `from`/`to` window (epoch ms) that filters the events by
+  `event_time`; `GET /{dataset_id}/time-range` returns the dataset's full span
+  for the UI picker.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
-  generated graphs; invalidated on dataset delete/upload.
+  generated graphs, keyed by `(dataset_id, from_ms, to_ms)`; invalidated (all
+  ranges) on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
 - `backend/app/models.py` — `LogEvent.event_time` (epoch ms, nullable) is filled
@@ -113,8 +122,18 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    `ActionType`, Falcon uses `#event_simpleName`. Reuse
    `app/parsers/vendor.py` rather than hardcoding markers.
 2. **Graph ids must be stable and unique.**
-   - Node ids: `string_hash()` → sha1 truncated to 16 hex chars. **Never use
-     Python's built-in `hash()`** (salted per process).
+   - Process node ids are **host-scoped**: `pid@host` (bare `pid` when the event
+     has no host), built by `GraphBuilder.process_node_id`. A bare PID is only
+     unique per machine, so host-scoping stops the same PID on two hosts from
+     collapsing into one node. Parsers must reuse the id returned by
+     `get_or_create_process_node` for their edges and for artifact ids that
+     embed the owning process. `_timeline_element_ids` composes the same id.
+   - The **displayed** PID (node `label`/`title` and the `pid` field in `data`)
+     is the bare `pid`; only the *id* stays host-scoped. So the UI shows `600`
+     while the same PID on two hosts remains two distinct nodes (the host is
+     still rendered on its own `🖥️` line).
+   - Artifact node ids: `string_hash()` → sha1 truncated to 16 hex chars.
+     **Never use Python's built-in `hash()`** (salted per process).
    - Edge ids: the `GraphBuilder._edge_seq` counter (`edge_1`, `edge_2`, …).
 3. **Uploads are streamed**, size-capped (`MAX_UPLOAD_SIZE_MB`), and inserted in
    batches (`INSERT_BATCH_SIZE`). Keep the memory-bounded pattern.
@@ -159,7 +178,7 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 
 ## Testing
 
-- Backend: `backend/tests/` (93 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (107 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
@@ -196,6 +215,10 @@ Conventional-commit prefixes have been used so far (`security:`, `perf:`,
 
 - `GraphView.jsx` uses `react-cytoscapejs`, which re-runs the layout whenever
   the `layout` prop reference changes — keep it memoised (`useMemo`).
+- Do **not** re-add Cytoscape's `textureOnViewport` / `hideEdgesOnViewport` to
+  `GraphView.jsx`: both make relationship edges invisible until the viewport is
+  invalidated by an interaction (select/pan/zoom), which reads as a rendering
+  bug. Plain canvas rendering keeps edges painted from the first frame.
 - `react-cytoscapejs` calls the `cy` prop on **every** mount/update. Register
   the graph event listeners inside that callback, guarded by instance identity,
   not in a `useEffect`: the effect version can bind to a destroyed instance

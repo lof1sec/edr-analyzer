@@ -9,10 +9,10 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
     if evt_type == "ProcessCreated":
         cmdline = event.get("ProcessCommandLine", "No CommandLine")
         if actor_id and target_id:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
-            builder.get_or_create_process_node(
-                target_id, target_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
+            target_id = builder.get_or_create_process_node(
+                target_id, target_name, username, hostname, evt_type, event) or target_id
             builder.add_edge(
                 actor_id,
                 target_id,
@@ -40,8 +40,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         ps_command = add_fields.get("Command") or str(
             event.get("AdditionalFields", ""))
         if actor_id and ps_command:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             cmd_node_id = f"pscmd_{actor_id}_{hash_str(ps_command)}"
             wrapped_cmd = textwrap.fill(as_text(ps_command), width=60)
             builder.add_or_update_artifact_node(cmd_node_id,
@@ -64,8 +64,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             "ModuleILPathOrName",
             "Unbacked CLR Assembly")
         if actor_id:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             clr_node_id = f"clr_{actor_id}_{hash_str(module_name)}"
             display_clr = f"Unbacked CLR\n{as_text(module_name)[:30]}"
             clr_info = f"[{evt_type}]\nAssembly / Module Name: {module_name}\nDetails:\n{event.get('AdditionalFields', '')}"
@@ -85,8 +85,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         search_filter = as_text(add_fields.get("SearchFilter", "Unknown Filter"))
         attributes = str(add_fields.get("AttributeList", ""))
         if actor_id:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             ldap_node_id = f"ldap_{actor_id}_{hash_str(search_filter)}"
             display_ldap = f"LDAP Search\n{search_filter[:30]}..." if len(
                 search_filter) > 30 else f"LDAP Search\n{search_filter}"
@@ -108,8 +108,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         driver_name = add_fields.get("DriverName", "Unknown Driver")
         pnp_actor = actor_id if actor_id else "SYSTEM_PNP"
         pnp_actor_name = actor_name if actor_id else "Plug and Play Manager"
-        builder.get_or_create_process_node(
-            pnp_actor, pnp_actor_name, username, hostname, evt_type, event)
+        pnp_actor = builder.get_or_create_process_node(
+            pnp_actor, pnp_actor_name, username, hostname, evt_type, event) or pnp_actor
         pnp_node_id = f"pnp_{hash_str(device_id)}"
         display_pnp = f"PnP Device\n{driver_name}"
         pnp_info = f"[{evt_type}]\nDevice ID: {device_id}\nDriver: {driver_name}\nDetails: {event.get('AdditionalFields', '')}"
@@ -126,8 +126,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
 
     elif evt_type == "GetClipboardData":
         if actor_id:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             clip_node_id = f"clip_{actor_id}"
             clip_info = f"[{evt_type}]\nProcess accessed system clipboard contents."
             builder.add_or_update_artifact_node(
@@ -146,8 +146,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         client_machine = add_fields.get("ClientMachine", "Local")
         wmi_actor = actor_id if actor_id else "WMI_Subsystem"
         wmi_actor_name = actor_name if actor_id else "WMI Engine"
-        builder.get_or_create_process_node(
-            wmi_actor, wmi_actor_name, username, hostname, evt_type, event)
+        wmi_actor = builder.get_or_create_process_node(
+            wmi_actor, wmi_actor_name, username, hostname, evt_type, event) or wmi_actor
         wmi_node_id = f"wmi_query_{hash_str(str(add_fields))}"
         wmi_info = f"[{evt_type}]\nClient Machine: {client_machine}\nDetails:\n{event.get('AdditionalFields', '')}"
         builder.add_or_update_artifact_node(
@@ -170,8 +170,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         pipe_name = add_fields.get("PipeName")
         file_op = add_fields.get("FileOperation", "NamedPipeEvent")
         if actor_id and pipe_name:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             pipe_name_text = as_text(pipe_name)
             display_pipe = pipe_name_text.split(
                 '\\')[-1] if '\\' in pipe_name_text else pipe_name_text
@@ -195,8 +195,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         master_key_guid = add_fields.get("MasterKeyGUID", "Unknown GUID")
         flags = add_fields.get("Flags", "")
         if actor_id:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             dpapi_node_id = f"dpapi_{master_key_guid}"
             display_name = f"DPAPI\n{operation_type}"
             dpapi_info = f"[{evt_type}]\nOperation: {operation_type}\nMasterKey GUID: {master_key_guid}\nFlags: {flags}"
@@ -214,8 +214,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
     elif evt_type == "BrowserLaunchedToOpenUrl":
         launched_url = event.get("RemoteUrl", "")
         if actor_id and launched_url:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             url_text = as_text(launched_url)
             url_node_id = f"url_{hash_str(url_text)}"
             display_url = url_text[:50] + \
@@ -240,8 +240,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             add_fields_raw = json.dumps(add_fields_raw)
         av_actor = actor_id if actor_id else "SYSTEM_AV"
         av_actor_name = actor_name if actor_id else "Windows Defender Engine"
-        builder.get_or_create_process_node(
-            av_actor, av_actor_name, username, hostname, evt_type, event)
+        av_actor = builder.get_or_create_process_node(
+            av_actor, av_actor_name, username, hostname, evt_type, event) or av_actor
         alert_node_id = f"av_alert_{file_name}_{sha1}"
         display_name = f"⚠️ AV ALERT\n{as_text(file_name)[:25]}"
         alert_info = f"[{evt_type}]\nTarget Payload: {file_name}\nSHA1: {sha1}\nDetails: {add_fields_raw}"
@@ -261,8 +261,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         file_name = as_text(event.get("FileName", ""))
         full_path = folder_path if folder_path else file_name
         if actor_id and full_path:
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             display_file = file_name[:50] + \
                 "..." if len(file_name) > 50 else file_name
             if not display_file:
@@ -290,8 +290,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         dll_name = as_text(event.get("FileName", ""))
         if actor_id and dll_path:
             short_dll = dll_name if dll_name else dll_path.split('\\')[-1]
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             builder.add_or_update_artifact_node(
                 dll_path, short_dll, f"[{evt_type}]\nLoaded Module/Driver:\n{dll_path}", "module", event)
             builder.add_edge(
@@ -313,8 +313,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             raw_reg = reg_value if reg_value else reg_key.split('\\')[-1]
             display_reg = raw_reg[:50] + \
                 "..." if len(raw_reg) > 50 else raw_reg
-            builder.get_or_create_process_node(
-                actor_id, actor_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(
+                actor_id, actor_name, username, hostname, evt_type, event) or actor_id
             full_reg_info = f"[{evt_type}]\nKey: {reg_key}\nValue: {reg_value}\nData:\n{reg_data}"
             builder.add_or_update_artifact_node(
                 reg_node_id, display_reg, full_reg_info, "registry", event)
@@ -375,8 +375,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             net_node_id = f"{target_net}:{target_port}" if target_port else target_net
 
             if not str(net_actor).startswith("host_"):
-                builder.get_or_create_process_node(
-                    net_actor, net_actor_name, username, hostname, evt_type, event)
+                net_actor = builder.get_or_create_process_node(
+                    net_actor, net_actor_name, username, hostname, evt_type, event) or net_actor
 
             if evt_type == "DnsConnectionInspected":
                 ips = ""
@@ -440,6 +440,6 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
     else:
         builder.unmapped_events.append(evt_type)
         if actor_id and target_id and actor_id != target_id:
-            builder.get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
-            builder.get_or_create_process_node(target_id, target_name, username, hostname, evt_type, event)
+            actor_id = builder.get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event) or actor_id
+            target_id = builder.get_or_create_process_node(target_id, target_name, username, hostname, evt_type, event) or target_id
             builder.add_edge(actor_id, target_id, evt_type, "#a6a6a6", evt_type, raw_event=event)

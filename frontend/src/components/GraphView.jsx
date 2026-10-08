@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye, Clock } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -34,6 +34,28 @@ const CopyButton = ({ textToCopy }) => {
 // Above this many elements the physics simulation is capped and animations are
 // dropped so the layout stays interactive.
 const LARGE_GRAPH_THRESHOLD = 2000;
+
+// Convert epoch ms to a `datetime-local` input value in the user's timezone.
+function msToLocalInput(ms) {
+  if (ms == null) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Human-readable rendering of an epoch-ms instant for the "available range" hint.
+function formatRange(ms) {
+  if (ms == null) return '—';
+  return new Date(ms).toLocaleString();
+}
+
+// dd/mm/yyyy, HH:MM:SS in the user's local timezone (for element timestamps).
+function formatDateTime(ms) {
+  if (ms == null) return null;
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0) {
   const large = elementCount > LARGE_GRAPH_THRESHOLD;
@@ -125,6 +147,22 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   const [baseElementCount, setBaseElementCount] = useState(0);
   // cluster_id -> { node, edge, memberIds, memberEdgeIds } for the expanded set.
   const [expandedClusters, setExpandedClusters] = useState({});
+  // Large graphs are truncated server-side: these track the initial view vs the
+  // full element count and drive the "load more" pager.
+  const [truncated, setTruncated] = useState(false);
+  const [totalElements, setTotalElements] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const omittedOffsetRef = useRef(0);
+  // Time-range filter: `rangeFrom`/`rangeTo` are the *applied* bounds (epoch ms)
+  // that drive the graph; `fromInput`/`toInput` are the picker values edited by
+  // the user. `availableRange` is the dataset's full span, shown as a hint.
+  const [rangeFrom, setRangeFrom] = useState(null);
+  const [rangeTo, setRangeTo] = useState(null);
+  const [fromInput, setFromInput] = useState('');
+  const [toInput, setToInput] = useState('');
+  const [availableRange, setAvailableRange] = useState({ min: null, max: null });
+  const timeRangeRef = useRef({ from: null, to: null });
+  const rangeDatasetRef = useRef(datasetId);
   const cyRef = useRef(null);
   const initialPositions = useRef({});
   const isRightPaneOpenRef = useRef(true);
@@ -163,6 +201,26 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   useEffect(() => { isRightPaneOpenRef.current = isRightPaneOpen; }, [isRightPaneOpen]);
   useEffect(() => { layoutModeRef.current = layoutMode; }, [layoutMode]);
   useEffect(() => { datasetIdRef.current = datasetId; }, [datasetId]);
+  useEffect(() => { timeRangeRef.current = { from: rangeFrom, to: rangeTo }; }, [rangeFrom, rangeTo]);
+
+  // The dataset's full event-time span (unfiltered) backs the range hint and the
+  // pickers' min/max. Fetched once per dataset, in parallel-ish with the graph.
+  useEffect(() => {
+    if (!datasetId) {
+      setAvailableRange({ min: null, max: null });
+      return undefined;
+    }
+    let cancelled = false;
+    api.getTimeRange(datasetId)
+      .then((res) => {
+        if (!cancelled) setAvailableRange({ min: res?.min_ms ?? null, max: res?.max_ms ?? null });
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setAvailableRange({ min: null, max: null });
+      });
+    return () => { cancelled = true; };
+  }, [datasetId]);
 
   const elementsById = useMemo(() => {
     const map = new Map();
@@ -200,7 +258,21 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
 
   useEffect(() => {
     if (!datasetId) return;
-    initialPositions.current = {}; // Reset positions on new dataset
+
+    // Switching datasets starts unfiltered: ignore (and clear) any range applied
+    // to the previous dataset, without skipping this run's fetch.
+    const datasetChanged = rangeDatasetRef.current !== datasetId;
+    if (datasetChanged) {
+      rangeDatasetRef.current = datasetId;
+      setRangeFrom(null);
+      setRangeTo(null);
+      setFromInput('');
+      setToInput('');
+    }
+    const activeFrom = datasetChanged ? null : rangeFrom;
+    const activeTo = datasetChanged ? null : rangeTo;
+
+    initialPositions.current = {}; // Reset positions on new dataset/range
     rawLogsCache.current = new Map();
     setSelectedNode(null);
     setSelectedLogs([]);
@@ -213,13 +285,15 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       setLoading(true);
       try {
         const [data, savedLayout] = await Promise.all([
-          api.getGraph(datasetId),
+          api.getGraph(datasetId, { from: activeFrom, to: activeTo }),
           api.getLayout(datasetId).catch(() => null),
         ]);
 
         // Restore the saved arrangement (if any) before the layout memo runs.
+        // A time filter changes the node set, so the full-graph layout no longer
+        // applies and is skipped.
         const saved = savedLayout?.positions;
-        if (saved && Object.keys(saved).length > 0) {
+        if (activeFrom == null && activeTo == null && saved && Object.keys(saved).length > 0) {
           initialPositions.current = saved;
         }
 
@@ -250,6 +324,10 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         setBaseElementCount(cyElements.length);
         setElements(cyElements);
         setUnmappedEvents(data.unmapped_events || {});
+        setTruncated(Boolean(data.truncated));
+        setTotalElements((data.total_nodes || 0) + (data.total_edges || 0));
+        omittedOffsetRef.current = 0;
+        setLoadingMore(false);
       } catch (err) {
         console.error(err);
         setError(err?.message || 'Failed to load the graph.');
@@ -258,7 +336,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       }
     };
     fetchGraph();
-  }, [datasetId, reloadKey]);
+  }, [datasetId, reloadKey, rangeFrom, rangeTo]);
 
   // The backend resolves the global search against its cached search index, so
   // raw events never reach the browser. Storing the query with the result lets
@@ -403,7 +481,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
 
     let cancelled = false;
     setLogsLoading(true);
-    api.getElementLogs(datasetId, elementId)
+    api.getElementLogs(datasetId, elementId, { from: rangeFrom, to: rangeTo })
       .then(res => {
         const logs = res?.raw_logs || [];
         rawLogsCache.current.set(elementId, logs);
@@ -418,7 +496,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       });
 
     return () => { cancelled = true; };
-  }, [datasetId, selectedNode, activeTab]);
+  }, [datasetId, selectedNode, activeTab, rangeFrom, rangeTo]);
 
   const centeredOn = layoutMode === 'centered' ? selectedNode : null;
 
@@ -457,6 +535,25 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
     });
   };
+
+  // Apply the picker values as the active time window. Only changing the
+  // applied range triggers a graph reload (see the fetch effect); a range where
+  // only one bound is set is valid.
+  const applyTimeRange = () => {
+    const from = fromInput ? new Date(fromInput).getTime() : null;
+    const to = toInput ? new Date(toInput).getTime() : null;
+    setRangeFrom(Number.isFinite(from) ? from : null);
+    setRangeTo(Number.isFinite(to) ? to : null);
+  };
+
+  const clearTimeRange = () => {
+    setFromInput('');
+    setToInput('');
+    setRangeFrom(null);
+    setRangeTo(null);
+  };
+
+  const hasActiveTimeRange = rangeFrom != null || rangeTo != null;
 
   // Persist the current node positions (debounced). The in-memory snapshot is
   // updated immediately so switching back to the force layout snaps to the
@@ -508,6 +605,78 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     });
   };
 
+  // Fetch the next page of elements omitted from the truncated initial view and
+  // append them without re-running the layout (baseElementCount is left alone,
+  // so the memoised layout object stays the same). New nodes are fanned out
+  // around the current viewport centre instead of piling up at (0, 0).
+  const loadMoreElements = useCallback(async () => {
+    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.getGraphElements(datasetIdRef.current, {
+        offset: omittedOffsetRef.current,
+        limit: 500,
+        from: timeRangeRef.current.from,
+        to: timeRangeRef.current.to,
+      });
+      const cy = cyRef.current;
+      let center = { x: 0, y: 0 };
+      if (cy) {
+        const ext = cy.extent();
+        center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
+      }
+      const nodes = res.nodes || [];
+      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...(res.edges || [])]);
+      omittedOffsetRef.current += nodes.length;
+      if ((res.remaining ?? 0) === 0) setTruncated(false);
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || 'Could not load more elements.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, truncated]);
+
+  // Load *every* remaining element, paging until nothing is left. Offered by the
+  // "Cargar todos" button, which only shows while the user is searching or has
+  // filtered the graph, when seeing the whole element set actually matters.
+  const loadAllElements = useCallback(async () => {
+    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    setLoadingMore(true);
+    try {
+      const nodes = [];
+      const edges = [];
+      let offset = omittedOffsetRef.current;
+      while (true) {
+        const res = await api.getGraphElements(datasetIdRef.current, {
+          offset,
+          limit: 1000,
+          from: timeRangeRef.current.from,
+          to: timeRangeRef.current.to,
+        });
+        const pageNodes = res.nodes || [];
+        nodes.push(...pageNodes);
+        edges.push(...(res.edges || []));
+        offset += pageNodes.length;
+        if ((res.remaining ?? 0) === 0 || pageNodes.length === 0) break;
+      }
+      const cy = cyRef.current;
+      let center = { x: 0, y: 0 };
+      if (cy) {
+        const ext = cy.extent();
+        center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
+      }
+      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...edges]);
+      omittedOffsetRef.current = offset;
+      setTruncated(false);
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || 'Could not load all elements.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, truncated]);
+
   const expandCluster = useCallback(async (clusterId) => {
     const cy = cyRef.current;
     if (!cy || !datasetIdRef.current) return;
@@ -522,7 +691,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     const clusterEdgeData = clusterEdge.nonempty() ? clusterEdge.data() : null;
 
     try {
-      const res = await api.getCluster(datasetIdRef.current, clusterId);
+      const res = await api.getCluster(datasetIdRef.current, clusterId, timeRangeRef.current);
       const nodes = res.nodes || [];
       const edges = res.edges || [];
       setElements(prev => prev
@@ -772,13 +941,24 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     .filter((usr) => usr.toLowerCase().includes(userSearch.toLowerCase()));
   const pidLabel = (pid) => {
     const node = elementsById.get(pid);
-    return node && node.data.process_name ? `${node.data.process_name} (${pid})` : pid;
+    // Display the bare PID (data.pid); the map stays keyed by the host-scoped id.
+    const barePid = (node && node.data.pid) || pid;
+    return node && node.data.process_name ? `${node.data.process_name} (${barePid})` : barePid;
   };
   const filteredPids = Object.keys(pids)
     .sort()
     .filter((pid) => pidLabel(pid).toLowerCase().includes(pidSearch.toLowerCase()));
 
   const searchHasNoMatches = Boolean(searchQuery && matchedIds && matchedIds.size === 0);
+
+  // "Cargar todos" is offered whenever the user is actively narrowing the graph:
+  // a global search term, or at least one checkbox hidden in the Event Types,
+  // Users or PIDs filters. Only then does loading the full set matter.
+  const showLoadAll =
+    Boolean(searchQuery) ||
+    Object.values(eventTypes).some((value) => value === false) ||
+    Object.values(users).some((value) => value === false) ||
+    Object.values(pids).some((value) => value === false);
 
   return (
     <div className="flex-1 flex relative overflow-hidden w-full h-full">
@@ -844,6 +1024,53 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
                 <ZoomIn size={16} />
               </button>
             </div>
+            <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 shadow">
+              <Clock size={14} className="text-slate-500 dark:text-slate-400 shrink-0" aria-hidden="true" />
+              <input
+                type="datetime-local"
+                value={fromInput}
+                min={availableRange.min != null ? msToLocalInput(availableRange.min) : undefined}
+                max={toInput || (availableRange.max != null ? msToLocalInput(availableRange.max) : undefined)}
+                onChange={(e) => setFromInput(e.target.value)}
+                aria-label="Start time"
+                title="Start time"
+                className="bg-transparent text-xs text-slate-700 dark:text-slate-200 outline-none"
+              />
+              <span className="text-slate-400" aria-hidden="true">→</span>
+              <input
+                type="datetime-local"
+                value={toInput}
+                min={fromInput || (availableRange.min != null ? msToLocalInput(availableRange.min) : undefined)}
+                max={availableRange.max != null ? msToLocalInput(availableRange.max) : undefined}
+                onChange={(e) => setToInput(e.target.value)}
+                aria-label="End time"
+                title="End time"
+                className="bg-transparent text-xs text-slate-700 dark:text-slate-200 outline-none"
+              />
+              <button
+                onClick={applyTimeRange}
+                disabled={!fromInput && !toInput}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded text-xs font-semibold transition-colors"
+                title="Apply the time range to the graph"
+              >
+                Apply
+              </button>
+              {hasActiveTimeRange && (
+                <button
+                  onClick={clearTimeRange}
+                  className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 px-1 text-xs font-semibold"
+                  title="Clear the time filter"
+                  aria-label="Clear the time filter"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {(availableRange.min != null || availableRange.max != null) && (
+              <span className="w-full text-[10px] text-slate-500 dark:text-slate-400">
+                Available range: {formatRange(availableRange.min)} → {formatRange(availableRange.max)}
+              </span>
+            )}
         </div>
 
         {/* Legend */}
@@ -859,12 +1086,38 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
           ))}
         </div>
 
+        {/* Truncated-graph notice + pager */}
+        {truncated && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-slate-200 dark:border-slate-700 rounded shadow px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+            <span>
+              Mostrando {elements.length} de {totalElements} elementos
+            </span>
+            {showLoadAll ? (
+              <button
+                onClick={loadAllElements}
+                disabled={loadingMore}
+                title="Cargar todos los elementos restantes"
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
+              >
+                {loadingMore ? 'Cargando…' : 'Cargar todos'}
+              </button>
+            ) : (
+              <button
+                onClick={loadMoreElements}
+                disabled={loadingMore}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
+              >
+                {loadingMore ? 'Cargando…' : `Cargar más (${totalElements - elements.length})`}
+              </button>
+            )}
+          </div>
+        )}
+
         <CytoscapeComponent
           elements={elements}
           stylesheet={styleSheet}
           layout={layout}
           style={{ width: '100%', height: '100%' }}
-          textureOnViewport={true}
           cy={handleCy}
         />
 
@@ -973,6 +1226,24 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
                     )}
                   </div>
                 </div>
+
+                {(selectedNode.first_time != null || selectedNode.last_time != null) && (
+                  <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
+                    {selectedNode.first_time != null && (
+                      <p>
+                        <span className="font-semibold">Time:</span>{' '}
+                        {formatDateTime(selectedNode.first_time)}
+                      </p>
+                    )}
+                    {selectedNode.last_time != null &&
+                      selectedNode.last_time !== selectedNode.first_time && (
+                        <p>
+                          <span className="font-semibold">Last activity:</span>{' '}
+                          {formatDateTime(selectedNode.last_time)}
+                        </p>
+                      )}
+                  </div>
+                )}
 
                 <div className="bg-slate-50 dark:bg-black p-3 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-700 dark:text-green-400 overflow-x-auto">
                   <pre>{selectedNode.title || (selectedNode.label ? "No title" : "Edge")}</pre>

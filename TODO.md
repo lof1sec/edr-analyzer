@@ -74,6 +74,116 @@ carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
 
 ---
 
+## Filtro por rango temporal en el grafo — ✅ HECHO
+
+**Estado:** implementado. El grafo se puede filtrar por una ventana de tiempo
+(start/end) y la UI indica el rango total disponible del export.
+
+**Objetivo:** graficar solo los eventos dentro de un rango de tiempo, indicando
+start/end, sin perder la búsqueda global.
+
+### Backend
+
+- [x] **Filtrado por `event_time`**: `_build_graph_payload` acepta `from_ms`/
+      `to_ms` (epoch ms) y añade `WHERE event_time >= from AND <= to`. Los
+      eventos sin fecha (`event_time IS NULL`) se excluyen cuando hay ventana.
+      `backend/app/routers/graph.py`.
+- [x] **Params `from`/`to`** en `generate_graph`, `get_elements`,
+      `get_element_logs`, `get_cluster` y `get_neighbors`; el `search` global se
+      mantiene sin filtro de tiempo.
+- [x] **Cache por rango**: `graph_cache` pasa a clave `(dataset_id, from_ms,
+      to_ms)`; `invalidate(dataset_id)` borra todas las ventanas del dataset.
+      `backend/app/routers/graph_cache.py`.
+- [x] **Rango disponible**: `GET /api/graph/{id}/time-range` → `{min_ms, max_ms}`
+      (agregado `MIN/MAX(event_time)` del dataset completo; `null` si no hay
+      eventos con fecha).
+
+### Frontend
+
+- [x] **Picker start/end** (`datetime-local`) + botones **Apply** y **Clear** en
+      la barra del grafo. `frontend/src/components/GraphView.jsx`.
+- [x] **Rango disponible visible** junto a los inputs (`Available range: … → …`)
+      y como `min`/`max` de los campos, calculado sobre el dataset completo (sin
+      filtro).
+- [x] **Recarga al aplicar**: cambiar el rango recarga el grafo (reset de
+      selección/layout/truncado). El layout guardado solo se restaura sin filtro.
+- [x] **Paginación y evidencia coherentes**: "Cargar más/todos", `getCluster` y
+      `getElementLogs` propagan la ventana activa.
+- [x] **`api` (`frontend/src/api/client.js`)**: `getGraph`/`getGraphElements`/
+      `getElementLogs`/`getCluster`/`getNeighbors` aceptan `{from, to}`; nuevo
+      `getTimeRange`.
+
+### Testing
+
+- `backend/tests/test_graph_time.py`: filtrado por `from`/`to`, `time-range`
+  (span completo e ignorando eventos sin fecha) y 404 de dataset inexistente.
+- `backend/tests/test_graph_cache.py`: adaptado a claves `(dataset_id, from, to)`
+  y borrado de todas las ventanas al invalidar un dataset.
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
+## Tiempo del elemento en Node Details — ✅ HECHO
+
+**Estado:** implementado. El panel de detalles muestra cuándo se observó por
+primera y por última vez el nodo/edge seleccionado.
+
+**Objetivo:** ver el instante del elemento seleccionado en formato
+`dd/mm/yyyy, HH:MM:SS`.
+
+### Backend
+
+- [x] **`first_time`/`last_time` por elemento**: `_append_raw_log` (punto único
+      donde cada evento se adjunta a un nodo/arista) registra el `min`/`max` de
+      `event_time`, ignorando los eventos sin fecha. `backend/app/parsers/builder.py`.
+- [x] **Tiempo por evento**: `GraphBuilder.current_event_time` se fija en
+      `_build_graph_payload` con `log.event_time` antes de cada `parse(...)`.
+      `backend/app/routers/graph.py`.
+- [x] **Sin raw logs en `elements`** (invariante 8): solo se añade el epoch ms
+      normalizado a `data`, no el evento crudo.
+
+### Frontend
+
+- [x] **Fila "Time"** en Node Details (primera aparición) y **"Last activity"**
+      solo cuando difiere de la primera. `frontend/src/components/GraphView.jsx`.
+- [x] **Formato** `dd/mm/yyyy, HH:MM:SS` en zona horaria local.
+- [x] Elementos sin eventos con fecha: no se muestra nada de tiempo.
+
+### Testing
+
+- `backend/tests/test_graph_time.py`: `first_time`/`last_time` de nodo/arista con
+  varios eventos y ausencia de tiempo en elementos sin fecha.
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
+## Visualización del PID de proceso sin host — ✅ HECHO
+
+**Estado:** implementado. Los nodos proceso muestran solo el PID (`600`) en vez
+de `pid@host` (`600@H1`); el host sigue en su propia línea `🖥️ H1`.
+
+**Objetivo:** quitar el ruido del sufijo `@host` en la etiqueta/título del nodo.
+
+### Cambios
+
+- [x] **`backend/app/parsers/builder.py`** (`get_or_create_process_node`):
+      `label`/`title` usan el PID pelado (`data.pid`); el **id** del nodo sigue
+      siendo `pid@host` (invariante 2 intacto: sin colisiones entre hosts ni
+      migración de layouts).
+- [x] **`frontend/src/components/GraphView.jsx`**: el filtro "Process IDs (PIDs)"
+      muestra `process_name (600)` usando `data.pid`; el mapa `pids` sigue
+      claveado por `id` (la lógica de ocultar no cambia).
+- [x] **Timeline** (`_timeline_element_ids`) sin cambios: sigue componiendo
+      `pid@host` para enfocar el nodo correcto.
+
+### Testing
+
+- `backend/tests/test_builder.py`: el id sigue `100@hostA`, `data.pid == "100"` y
+  `label`/`title` muestran `100` (no `100@hostA`).
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
 ## Detección de patrones sospechosos + risk score
 
 **Estado:** planificado (sin implementar). Es la siguiente idea fuera del punto 3.
@@ -378,10 +488,96 @@ el grafo.
 
 ---
 
+## Revisión / correcciones (post-revisión) — ✅ HECHO
+
+**Estado:** revisión completa del proyecto. Corregidos los 4 bugs confirmados
+(crashes, duplicación de datos y colisión de procesos entre hosts con la
+misma PID), incluida la migración que invalida los layouts guardados con los
+ids antiguos.
+
+### Bugs confirmados y corregidos
+
+- [x] **`extract_timestamp` no era seguro ante `NaN`/`Infinity`/desbordes**
+      (`app/parsers/timestamps.py`). Un JSON con `NaN`/`Infinity` (que
+      `json.loads` acepta) o un número gigante lanzaba `ValueError`/
+      `OverflowError` al extraer el timestamp de **cada fila**, rompiendo el
+      upload completo con 500 y dejando un dataset huérfano. Ahora se valida
+      `math.isfinite` y un rango plausible (≤ 9999-12-31); no finito o fuera de
+      rango → `None`. Regresiones en `test_timestamps.py` y `test_timeline.py`
+      (upload con `NaN`).
+- [x] **`RegValueName` numérico en Falcon crasheaba** (`app/parsers/falcon.py`):
+      `len(raw_reg)` sobre un `int` → `TypeError`. Se aplica `as_text()` como al
+      resto de campos. Regresión en `test_parsers_smoke.py`.
+- [x] **Clusters duplicaban artefactos repetidos** (`_plan_clusters`,
+      `app/parsers/builder.py`): un hub con varias aristas al mismo artefacto
+      generaba `members` con duplicados, inflaba el umbral y producía nodos
+      repetidos al expandir (aunque `clusterCount` los contaba una vez). Se
+      deduplica preservando el orden. Regresión en `test_builder.py`.
+- [x] **Colisión de procesos entre hosts** (`get_or_create_process_node`,
+      `app/parsers/builder.py`): el id del nodo era solo `str(pid)`, así que el
+      mismo PID en dos máquinas colapsaba en un único nodo y se perdía un
+      proceso. Ahora el id es **host-scoped** (`pid@host`; sin host se mantiene
+      el PID crudo). Los parsers reutilizan el id devuelto para sus aristas y
+      para los artefactos que embeben el proceso; `_timeline_element_ids`
+      (`app/routers/graph.py`) compone igual. La migración
+      `0005_clear_graph_layouts` limpia los layouts guardados (posiciones por id
+      antiguo) para que el grafo se re-componga. Regresiones en `test_builder.py`
+      y `test_parsers_smoke.py`. **Cambio incompatible forward-only**: el grafo
+      se reconstruye on-demand, pero las posiciones guardadas se descartan.
+
+### Mejora menor aplicada
+
+- [x] `pool_pre_ping=True` en `create_engine` (`app/database.py`) para evitar
+      conexiones stale tras un reinicio de Postgres.
+
+### Eventos de parser añadidos
+
+- [x] **Falcon `ScriptControlScanInfo`**: el script escaneado por ScriptControl
+      se mapea como artefacto `file` (nombre corto + ruta + SHA256 + snippet del
+      contenido, truncado a 200 chars) con una arista `Runs Script` desde el
+      proceso que lo ejecuta. Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CreateSocket`**: la creación de un socket se mapea como artefacto
+      `network` keyed por proceso + (AddressFamily, SocketType, Protocol), con
+      `SocketType`/`Protocol` decodificados a etiquetas (`1→STREAM`, `6→TCP`, …) y
+      arista `Creates Socket` (`#00ffff`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CriticalFileAccessed`**: el archivo crítico accedido se mapea
+      como artefacto `file` (mismo id `file_{hash(path)}` que el resto de eventos
+      de fichero) con ruta, `UID`, `GID` y `UnixMode` en el título, y arista
+      `Accesses Critical File` (`#ff4d4d`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkLinkConfigGetAddress`**: solo trae el proceso; se registra
+      el nodo y su acción (sin artefacto/arista), evitando que cuente como
+      unmapped. Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `CriticalEnvironmentVariableChanged`**: `EnvironmentVariableName`/
+      `Value` se mapean como artefacto `registry` (`Env: NAME`) con arista
+      `Sets Env Var` (`#ff9933`). Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkListenIP4`**: el socket en listening se mapea como
+      artefacto `network` con el endpoint local (`LocalAddressIP4:LocalPort`,
+      mismo esquema de id que la red) y arista `Listens On` (`#00ffff`), con
+      `Protocol`/`ConnectionDirection` decodificados. Regresión en
+      `test_parsers_smoke.py`.
+
+### Recomendaciones no aplicadas (bajo impacto)
+
+- [ ] Extraer la constante `"Unknown"` duplicada en `events.py`/parsers.
+- [ ] JSON leniente: `_parse_json_rows` acepta comas ausentes y basura tras el
+      objeto; valorar modo estricto o contabilizar líneas malformadas.
+- [ ] Cache de grafo por-proceso (`graph_cache`): no se comparte con
+      `--workers N`; documentado, revisar si se escala.
+- [ ] Sin token CSRF (mitigado por allowlist CORS + `SameSite=lax` + httpOnly).
+
+### Testing
+
+- [x] `backend/tests/` pasa a **107 tests** (regresiones de los 4 bugs + los
+      nuevos eventos); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
+
+---
+
 ## Pendiente / ideas siguientes (fuera del punto 3)
 
 - [x] **Timeline / vista cronológica** con reproducción de la secuencia de
       eventos — hecho (sección homónima de arriba).
+- [x] **Revisión de código / correcciones** — 4 bugs corregidos (sección
+      homónima de arriba).
 - [ ] **Mapeo MITRE ATT&CK** por evento (táctica/técnica) y filtro por técnica.
 - [ ] **Detección de patrones sospechosos** (LOLBins, inyección, persistencia) y
       risk score — plan detallado en la sección homónima de arriba.

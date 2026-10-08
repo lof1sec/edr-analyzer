@@ -31,6 +31,46 @@ def test_process_nodes_are_keyed_by_pid():
     assert set(builder.nodes_dict) == {"42", "43"}
 
 
+def test_process_nodes_are_scoped_by_host():
+    """Regression: the same PID on two hosts must not collapse into one node."""
+    builder = GraphBuilder()
+    a = builder.get_or_create_process_node("100", "a.exe", hostname="hostA")
+    b = builder.get_or_create_process_node("100", "b.exe", hostname="hostB")
+
+    assert a == "100@hostA"
+    assert b == "100@hostB"
+    assert set(builder.nodes_dict) == {"100@hostA", "100@hostB"}
+
+
+def test_process_node_id_is_bare_without_host():
+    builder = GraphBuilder()
+    assert builder.process_node_id("7", None) == "7"
+    assert builder.process_node_id("7", "H1") == "7@H1"
+    assert builder.process_node_id(None, "H1") is None
+    assert builder.get_or_create_process_node("7", "c.exe") == "7"
+
+
+def test_process_node_shows_bare_pid_while_id_stays_host_scoped():
+    """Display uses the bare PID; the node id stays host-scoped for uniqueness."""
+    builder = GraphBuilder()
+    node_id = builder.get_or_create_process_node("100", "a.exe", hostname="hostA")
+
+    assert node_id == "100@hostA"
+    node = builder.nodes_dict["100@hostA"]
+    assert node["pid"] == "100"
+    # Label/title show the bare PID (host is on its own line)...
+    assert "100" in node["label"]
+    assert "100@hostA" not in node["label"]
+    assert "PID: 100" in node["title"]
+    assert "100@hostA" not in node["title"]
+    assert "🖥️ hostA" in node["label"]
+
+    # ...and data exposes the bare pid for the frontend filter.
+    payload = builder.build_cytoscape_elements()
+    data = next(n["data"] for n in payload["elements"]["nodes"] if n["data"]["id"] == "100@hostA")
+    assert data["pid"] == "100"
+
+
 def test_elements_are_json_serialisable():
     builder = GraphBuilder()
     builder.get_or_create_process_node("42", "cmd.exe")
@@ -114,6 +154,24 @@ def test_shared_descendants_are_not_collapsed(monkeypatch):
     assert collapsed_ids == {"leaf1.dll", "leaf2.dll"}
     # The shared artifact and every process node stay in the payload.
     assert "hub" in node_ids and "other" in node_ids
+
+
+def test_cluster_does_not_duplicate_repeated_artifact(monkeypatch):
+    """Regression: a hub targeting the same artifact twice duplicated its node."""
+    monkeypatch.setenv("CLUSTER_MIN_CHILDREN", "2")
+    builder = GraphBuilder()
+    builder.get_or_create_process_node("hub", "hub.exe")
+    builder.add_or_update_artifact_node("a.dll", "a.dll", "info", "file")
+    builder.add_or_update_artifact_node("dup.dll", "dup.dll", "info", "file")
+    builder.add_edge("hub", "a.dll", "FileCreated", "#4da6ff", "FileCreated")
+    builder.add_edge("hub", "dup.dll", "FileCreated", "#4da6ff", "FileCreated")
+    builder.add_edge("hub", "dup.dll", "FileDeleted", "#ff4d4d", "FileDeleted")
+
+    payload = builder.build_cytoscape_elements()
+    cluster = next(iter(payload["clusters"].values()))
+    collapsed_ids = [node["data"]["id"] for node in cluster["nodes"]]
+    assert len(collapsed_ids) == len(set(collapsed_ids))
+    assert cluster["node"]["clusterCount"] == len(collapsed_ids) == 2
 
 
 def test_search_index_covers_events_beyond_the_raw_log_cap():

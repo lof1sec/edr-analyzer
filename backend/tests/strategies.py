@@ -117,6 +117,12 @@ FALCON_EVENT_TYPES = [
     "ModuleCertificateInfo2",
     "UserLogoff",
     "CommandHistory",
+    "ScriptControlScanInfo",
+    "CreateSocket",
+    "CriticalFileAccessed",
+    "NetworkLinkConfigGetAddress",
+    "CriticalEnvironmentVariableChanged",
+    "NetworkListenIP4",
 ]
 
 

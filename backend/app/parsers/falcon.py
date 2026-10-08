@@ -2,6 +2,43 @@ import textwrap
 
 from app.parsers.builder import GraphBuilder, as_text, hash_str, string_hash
 
+# CrowdStrike CreateSocket enum values (numeric code -> readable label). Kept
+# minimal and defensive: unknown codes fall back to the raw value.
+_SOCKET_TYPES = {
+    "1": "STREAM",
+    "2": "DGRAM",
+    "3": "RAW",
+    "4": "RDM",
+    "5": "SEQPACKET",
+    "6": "DCCP",
+    "10": "PACKET",
+}
+_SOCKET_PROTOCOLS = {
+    "0": "IP",
+    "1": "ICMP",
+    "2": "IGMP",
+    "6": "TCP",
+    "17": "UDP",
+    "41": "IPV6",
+    "47": "GRE",
+    "58": "ICMPV6",
+    "255": "UNKNOWN",
+}
+_CONNECTION_DIRECTIONS = {
+    "0": "OUTBOUND",
+    "1": "INBOUND",
+    "2": "NEITHER",
+    "3": "BOTH",
+    "4": "UNKNOWN",
+}
+
+
+def _decode_enum(table: dict, value) -> str:
+    """Decode a numeric enum to its label, falling back to the raw value."""
+    if value in (None, ""):
+        return "?"
+    return table.get(str(value), str(value))
+
 
 def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
                        actor_name: str, target_id: str, target_name: str, username: str, hostname: str):
@@ -15,15 +52,16 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                                "Unknown Process")).split('\\')[-1]
 
         if parent_id and target_id:
-            builder.get_or_create_process_node(
+            source_differs_from_parent = bool(source_id) and str(source_id) != str(parent_id)
+            parent_id = builder.get_or_create_process_node(
                 parent_id,
                 event.get("ParentBaseFileName"),
                 username,
                 hostname,
                 evt_type=evt_type,
-                raw_event=event)
-            builder.get_or_create_process_node(
-                target_id, image_file, username, hostname, evt_type, raw_event=event)
+                raw_event=event) or parent_id
+            target_id = builder.get_or_create_process_node(
+                target_id, image_file, username, hostname, evt_type, raw_event=event) or target_id
 
             builder.add_edge(
                 parent_id,
@@ -33,9 +71,9 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 evt_type,
                 raw_event=event)
 
-            if source_id and source_id != parent_id:
-                builder.get_or_create_process_node(
-                    source_id, None, username, hostname, evt_type=evt_type, raw_event=event)
+            if source_differs_from_parent:
+                source_id = builder.get_or_create_process_node(
+                    source_id, None, username, hostname, evt_type=evt_type, raw_event=event) or source_id
                 builder.add_edge(
                     source_id,
                     target_id,
@@ -69,8 +107,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or target_id
 
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, base_file, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, base_file, username, hostname, evt_type, event) or actor_ident
 
             ancestry_text = (
                 f"[{evt_type}]\n"
@@ -98,8 +136,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type == "AssociateIndicator":
         actor_ident = target_id or context_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             detect_name = event.get("DetectName", "Unknown Detection")
             severity = event.get("DetectSeverity", "0")
@@ -129,8 +167,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type in ["UserLogon", "UserIdentity", "IoSessionLoggedOn"]:
         actor_ident = context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             logon_type = event.get("LogonType", "Unknown")
             domain = event.get("LogonDomain", "")
@@ -176,8 +214,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
 
         if context_id and file_name:
-            builder.get_or_create_process_node(
-                context_id, actor_name, username, hostname, evt_type, event)
+            context_id = builder.get_or_create_process_node(
+                context_id, actor_name, username, hostname, evt_type, event) or context_id
 
             clean_path = file_name.replace('\\', '/')
             short_name = clean_path.rstrip('/').split('/')[-1]
@@ -210,8 +248,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
         actor_ident = context_id or source_id
         if actor_ident and file_name:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             clean_path = file_name.replace('\\', '/')
             short_name = clean_path.rstrip('/').split('/')[-1]
@@ -239,8 +277,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type == "SuspiciousCreateSymbolicLink":
         actor_ident = context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             symlink = as_text(event.get("SymbolicLinkName", ""))
             target = event.get("SymbolicLinkTarget", "")
@@ -270,8 +308,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = event.get(
             "RpcClientProcessId") or context_id or source_id
         if actor_ident:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             tactic = event.get("Tactic", "N/A")
             technique = event.get("Technique", "N/A")
@@ -319,8 +357,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or source_id
         if actor_ident and driver_path:
             short_driver = driver_path.split('\\')[-1]
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             sha256 = event.get("SHA256HashData", "N/A")
             company = event.get("CompanyName", "Unknown Company")
@@ -339,7 +377,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
 
     elif evt_type in ["AsepValueUpdate", "RegKeyCommit", "RegValueCommit", "RegSystemConfigValueUpdate"]:
         reg_key = as_text(event.get("RegObjectName", ""))
-        reg_value = event.get("RegValueName", "")
+        reg_value = as_text(event.get("RegValueName", ""))
         actor_ident = context_id or source_id
         if actor_ident and reg_key:
             reg_node_id = f"{reg_key}\\{reg_value}" if reg_value else reg_key
@@ -347,8 +385,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             display_reg = raw_reg[:50] + \
                 "..." if len(raw_reg) > 50 else raw_reg
 
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             full_reg_info = f"[{evt_type}]\nKey: {reg_key}\nValue: {reg_value}"
 
             builder.add_or_update_artifact_node(
@@ -368,8 +406,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         actor_ident = context_id or source_id
 
         if actor_ident and (remote_ip or domain):
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             if evt_type == "DnsRequest":
                 dns_node_id = f"dns_{domain}"
@@ -492,8 +530,8 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
         cmd_history = as_text(event.get("CommandHistory", ""))
         actor_ident = target_id or context_id
         if actor_ident and cmd_history:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
             wrapped_cmd = textwrap.fill(cmd_history, width=60)
 
@@ -511,14 +549,165 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 dashed=True,
                 raw_event=event)
 
+    elif evt_type == "ScriptControlScanInfo":
+        # CrowdStrike ScriptControl scan: a process ran/loaded a script. The
+        # script is represented as a file artifact (name + hash); the (possibly
+        # large) content is only summarised in the title.
+        actor_ident = context_id or source_id
+        script_name = as_text(event.get("ScriptContentName", ""))
+        script_content = as_text(event.get("ScriptContent", ""))
+        if actor_ident and (script_name or script_content):
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            sha256 = as_text(event.get("ContentSHA256HashData", "N/A"))
+            short = script_name.replace("\\", "/").split("/")[-1] or "script"
+            script_node_id = f"script_{string_hash(script_name or script_content)}"
+            snippet = (
+                script_content[:200] + "…" if len(script_content) > 200 else script_content
+            )
+            script_info = f"[{evt_type}]\nScript: {script_name}\nSHA256: {sha256}"
+            if snippet:
+                script_info += f"\nContent:\n{snippet}"
+
+            builder.add_or_update_artifact_node(
+                script_node_id, short, script_info, "file", event)
+            builder.add_edge(
+                actor_ident,
+                script_node_id,
+                "Runs Script",
+                "#4da6ff",
+                evt_type,
+                dashed=True,
+                raw_event=event)
+
+    elif evt_type == "CreateSocket":
+        # A process opened a socket. There is no remote endpoint, so the socket
+        # is represented as a network artifact keyed by the owning process and
+        # its (family, type, protocol) description.
+        actor_ident = context_id or source_id
+        if actor_ident:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            family = as_text(event.get("AddressFamily", "?")) or "?"
+            socket_type = _decode_enum(_SOCKET_TYPES, event.get("SocketType"))
+            protocol = _decode_enum(_SOCKET_PROTOCOLS, event.get("Protocol"))
+            socket_node_id = f"socket_{string_hash(f'{actor_ident}|{family}|{socket_type}|{protocol}')}"
+            label = f"Socket: {protocol}/{socket_type}"
+            socket_info = (
+                f"[{evt_type}]\nAddress Family: {family}\n"
+                f"Socket Type: {socket_type}\nProtocol: {protocol}"
+            )
+
+            builder.add_or_update_artifact_node(
+                socket_node_id, label, socket_info, "network", event)
+            builder.add_edge(
+                actor_ident,
+                socket_node_id,
+                "Creates Socket",
+                "#00ffff",
+                evt_type,
+                raw_event=event)
+
+    elif evt_type == "CriticalFileAccessed":
+        # A process accessed a critical file. The file shares the same id scheme
+        # as the other file events, so reads/writes/modifications of the same
+        # path collapse into one node.
+        actor_ident = context_id or source_id
+        file_name = as_text(event.get("TargetFileName") or event.get("FileName", ""))
+        if actor_ident and file_name:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            clean_path = file_name.replace("\\", "/")
+            short_name = clean_path.rstrip("/").split("/")[-1]
+            display_file = short_name[:50] + "..." if len(short_name) > 50 else short_name
+
+            file_node_id = f"file_{string_hash(file_name)}"
+            uid = as_text(event.get("UID", ""))
+            gid = as_text(event.get("GID", ""))
+            unix_mode = as_text(event.get("UnixMode", ""))
+            file_info = f"[{evt_type}]\nFile: {file_name}"
+            if uid:
+                file_info += f"\nUID: {uid}"
+            if gid:
+                file_info += f"\nGID: {gid}"
+            if unix_mode:
+                file_info += f"\nUnix Mode: {unix_mode}"
+
+            builder.add_or_update_artifact_node(
+                file_node_id, display_file, file_info, "file", event)
+            builder.add_edge(
+                actor_ident,
+                file_node_id,
+                "Accesses Critical File",
+                "#ff4d4d",
+                evt_type,
+                raw_event=event)
+
+    elif evt_type == "NetworkLinkConfigGetAddress":
+        # Only carries the originating process: register the node (and its
+        # action/raw logs) so the event is mapped rather than unmapped.
+        actor_ident = context_id or source_id
+        if actor_ident:
+            builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event)
+
+    elif evt_type == "CriticalEnvironmentVariableChanged":
+        actor_ident = context_id or source_id
+        env_name = as_text(event.get("EnvironmentVariableName", ""))
+        env_value = as_text(event.get("EnvironmentVariableValue", ""))
+        if actor_ident and env_name:
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            env_node_id = f"env_{string_hash(env_name)}"
+            env_info = f"[{evt_type}]\nName: {env_name}\nValue: {env_value}"
+            builder.add_or_update_artifact_node(
+                env_node_id, f"Env: {env_name}", env_info, "registry", event)
+            builder.add_edge(
+                actor_ident,
+                env_node_id,
+                "Sets Env Var",
+                "#ff9933",
+                evt_type,
+                raw_event=event)
+
+    elif evt_type == "NetworkListenIP4":
+        # A process opened a socket in listening mode; the endpoint is local.
+        actor_ident = context_id or source_id
+        local_ip = as_text(event.get("LocalAddressIP4", ""))
+        local_port = as_text(event.get("LocalPort", ""))
+        if actor_ident and (local_ip or local_port):
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+
+            endpoint = f"{local_ip}:{local_port}" if local_port else local_ip
+            protocol = _decode_enum(_SOCKET_PROTOCOLS, event.get("Protocol"))
+            direction = _decode_enum(_CONNECTION_DIRECTIONS, event.get("ConnectionDirection"))
+            listen_info = (
+                f"[{evt_type}]\nLocal: {endpoint}\n"
+                f"Protocol: {protocol}\nDirection: {direction}"
+            )
+            builder.add_or_update_artifact_node(
+                endpoint, f"Listen {endpoint}", listen_info, "network", event)
+            builder.add_edge(
+                actor_ident,
+                endpoint,
+                "Listens On",
+                "#00ffff",
+                evt_type,
+                raw_event=event)
+
     else:
         builder.unmapped_events.append(evt_type)
         actor_ident = context_id or source_id or parent_id
         if actor_ident and target_id and actor_ident != target_id:
-            builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event)
-            builder.get_or_create_process_node(
-                target_id, target_name, username, hostname, evt_type, event)
+            actor_ident = builder.get_or_create_process_node(
+                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+            target_id = builder.get_or_create_process_node(
+                target_id, target_name, username, hostname, evt_type, event) or target_id
             builder.add_edge(
                 actor_ident,
                 target_id,
