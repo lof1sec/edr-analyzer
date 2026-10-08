@@ -2,7 +2,7 @@ import os
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import String, cast
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -153,24 +153,34 @@ def _truncated_parts(payload: dict, cap: int):
     return nodes, edges, omitted_nodes, omitted_edges
 
 
-def _build_graph_payload(dataset_id: int, db: Session) -> dict:
+def _build_graph_payload(
+    dataset_id: int,
+    db: Session,
+    from_ms: int | None = None,
+    to_ms: int | None = None,
+) -> dict:
     """Parse every event of a dataset into a full graph payload.
 
     The payload contains lightweight ``elements`` (no raw logs) plus a
     ``raw_logs`` side map keyed by element id, used by the lazy detail endpoint.
+
+    ``from_ms``/``to_ms`` (epoch milliseconds) restrict the events used to build
+    the graph to that window. Undated events (``event_time IS NULL``) are excluded
+    whenever either bound is given.
     """
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    query = db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id)
+    if from_ms is not None:
+        query = query.filter(LogEvent.event_time >= from_ms)
+    if to_ms is not None:
+        query = query.filter(LogEvent.event_time <= to_ms)
+
     # ``yield_per`` streams rows instead of materialising every JSONB blob at
     # once, keeping peak memory bounded for large datasets.
-    logs = (
-        db.query(LogEvent)
-        .filter(LogEvent.dataset_id == dataset_id)
-        .order_by(LogEvent.id)
-        .yield_per(1000)
-    )
+    logs = query.order_by(LogEvent.id).yield_per(1000)
     builder = GraphBuilder()
 
     for log in logs:
@@ -202,20 +212,35 @@ def _build_graph_payload(dataset_id: int, db: Session) -> dict:
     return builder.build_cytoscape_elements()
 
 
-def _get_graph_payload(dataset_id: int, db: Session) -> dict:
-    """Return the cached graph payload, building and caching it on a miss."""
-    cached = graph_cache.get(dataset_id)
+def _get_graph_payload(
+    dataset_id: int,
+    db: Session,
+    from_ms: int | None = None,
+    to_ms: int | None = None,
+) -> dict:
+    """Return the cached graph payload, building and caching it on a miss.
+
+    The cache key includes the time window so each filtered graph is built and
+    stored once.
+    """
+    key = (dataset_id, from_ms, to_ms)
+    cached = graph_cache.get(key)
     if cached is not None:
         return cached
 
-    payload = _build_graph_payload(dataset_id, db)
-    graph_cache.put(dataset_id, payload)
+    payload = _build_graph_payload(dataset_id, db, from_ms, to_ms)
+    graph_cache.put(key, payload)
     return payload
 
 
 @router.get("/{dataset_id}")
-def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
-    payload = _get_graph_payload(dataset_id, db)
+def generate_graph(
+    dataset_id: int,
+    from_ms: int | None = Query(None, alias="from", description="Start of the time window (epoch ms)"),
+    to_ms: int | None = Query(None, alias="to", description="End of the time window (epoch ms)"),
+    db: Session = Depends(get_db),
+):
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     # Raw logs are intentionally omitted here so the initial response and the
     # in-browser graph stay small; they are fetched on demand below. Unmapped
     # events are aggregated to counts so the payload does not carry one entry
@@ -232,11 +257,32 @@ def generate_graph(dataset_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{dataset_id}/time-range")
+def get_time_range(dataset_id: int, db: Session = Depends(get_db)):
+    """Return the dataset's full event-time span (epoch ms), regardless of filters.
+
+    ``min_ms``/``max_ms`` are ``None`` when the dataset has no dated events. The
+    UI uses this to bound the time-range picker and show the available window.
+    """
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    min_ms, max_ms = (
+        db.query(func.min(LogEvent.event_time), func.max(LogEvent.event_time))
+        .filter(LogEvent.dataset_id == dataset_id)
+        .one()
+    )
+    return {"min_ms": min_ms, "max_ms": max_ms}
+
+
 @router.get("/{dataset_id}/elements")
 def get_elements(
     dataset_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=5000),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
     """Return a page of the elements omitted from the truncated initial view.
@@ -246,7 +292,7 @@ def get_elements(
     already loaded (either in the initial view or an earlier page), so the client
     never receives a dangling edge.
     """
-    payload = _get_graph_payload(dataset_id, db)
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     _, _, omitted_nodes, omitted_edges = _truncated_parts(
         payload, _max_initial_elements()
     )
@@ -283,9 +329,11 @@ def get_elements(
 def get_element_logs(
     dataset_id: int,
     element_id: str = Query(..., description="Node or edge id from the graph payload"),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
-    payload = _get_graph_payload(dataset_id, db)
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     logs = payload.get("raw_logs", {}).get(element_id, [])
     return {"element_id": element_id, "raw_logs": logs, "returned": len(logs)}
 
@@ -424,10 +472,12 @@ MAX_NEIGHBOR_NODES = 2000
 def get_cluster(
     dataset_id: int,
     cluster_id: str,
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
     """Return the hidden elements of a collapsed cluster, on demand."""
-    payload = _get_graph_payload(dataset_id, db)
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     cluster = payload.get("clusters", {}).get(cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
@@ -444,6 +494,8 @@ def get_neighbors(
     dataset_id: int,
     element_id: str = Query(..., description="Node id to expand around"),
     depth: int = Query(1, ge=1, le=3),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
     """Return the subgraph within ``depth`` hops of ``element_id``.
@@ -451,7 +503,7 @@ def get_neighbors(
     Backs lazy/progressive exploration: the browser can pull in a neighbourhood
     without re-parsing or re-shipping the whole graph.
     """
-    payload = _get_graph_payload(dataset_id, db)
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     nodes = payload["elements"]["nodes"]
     edges = payload["elements"]["edges"]
     node_by_id = {node["data"]["id"]: node for node in nodes}

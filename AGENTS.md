@@ -89,9 +89,13 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   lazy raw-log/search/cluster/neighbour endpoints, the chronological timeline,
   saved-layout read/write, and cache-backed payloads. The initial payload is
   truncated to `MAX_INITIAL_ELEMENTS` (backbone + artifacts) and the remainder
-  is served on demand by `GET /{dataset_id}/elements`.
+  is served on demand by `GET /{dataset_id}/elements`. Graph endpoints accept an
+  optional `from`/`to` window (epoch ms) that filters the events by
+  `event_time`; `GET /{dataset_id}/time-range` returns the dataset's full span
+  for the UI picker.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
-  generated graphs; invalidated on dataset delete/upload.
+  generated graphs, keyed by `(dataset_id, from_ms, to_ms)`; invalidated (all
+  ranges) on dataset delete/upload.
 - `backend/ruff.toml` — backend lint config; run `ruff check .` (see Testing).
 - `backend/app/database.py` — engine/session; requires `DATABASE_URL`.
 - `backend/app/models.py` — `LogEvent.event_time` (epoch ms, nullable) is filled

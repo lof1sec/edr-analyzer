@@ -74,6 +74,55 @@ carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
 
 ---
 
+## Filtro por rango temporal en el grafo — ✅ HECHO
+
+**Estado:** implementado. El grafo se puede filtrar por una ventana de tiempo
+(start/end) y la UI indica el rango total disponible del export.
+
+**Objetivo:** graficar solo los eventos dentro de un rango de tiempo, indicando
+start/end, sin perder la búsqueda global.
+
+### Backend
+
+- [x] **Filtrado por `event_time`**: `_build_graph_payload` acepta `from_ms`/
+      `to_ms` (epoch ms) y añade `WHERE event_time >= from AND <= to`. Los
+      eventos sin fecha (`event_time IS NULL`) se excluyen cuando hay ventana.
+      `backend/app/routers/graph.py`.
+- [x] **Params `from`/`to`** en `generate_graph`, `get_elements`,
+      `get_element_logs`, `get_cluster` y `get_neighbors`; el `search` global se
+      mantiene sin filtro de tiempo.
+- [x] **Cache por rango**: `graph_cache` pasa a clave `(dataset_id, from_ms,
+      to_ms)`; `invalidate(dataset_id)` borra todas las ventanas del dataset.
+      `backend/app/routers/graph_cache.py`.
+- [x] **Rango disponible**: `GET /api/graph/{id}/time-range` → `{min_ms, max_ms}`
+      (agregado `MIN/MAX(event_time)` del dataset completo; `null` si no hay
+      eventos con fecha).
+
+### Frontend
+
+- [x] **Picker start/end** (`datetime-local`) + botones **Apply** y **Clear** en
+      la barra del grafo. `frontend/src/components/GraphView.jsx`.
+- [x] **Rango disponible visible** junto a los inputs (`Available range: … → …`)
+      y como `min`/`max` de los campos, calculado sobre el dataset completo (sin
+      filtro).
+- [x] **Recarga al aplicar**: cambiar el rango recarga el grafo (reset de
+      selección/layout/truncado). El layout guardado solo se restaura sin filtro.
+- [x] **Paginación y evidencia coherentes**: "Cargar más/todos", `getCluster` y
+      `getElementLogs` propagan la ventana activa.
+- [x] **`api` (`frontend/src/api/client.js`)**: `getGraph`/`getGraphElements`/
+      `getElementLogs`/`getCluster`/`getNeighbors` aceptan `{from, to}`; nuevo
+      `getTimeRange`.
+
+### Testing
+
+- `backend/tests/test_graph_time.py`: filtrado por `from`/`to`, `time-range`
+  (span completo e ignorando eventos sin fecha) y 404 de dataset inexistente.
+- `backend/tests/test_graph_cache.py`: adaptado a claves `(dataset_id, from, to)`
+  y borrado de todas las ventanas al invalidar un dataset.
+- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+
+---
+
 ## Detección de patrones sospechosos + risk score
 
 **Estado:** planificado (sin implementar). Es la siguiente idea fuera del punto 3.
