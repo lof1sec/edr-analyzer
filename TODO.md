@@ -6,368 +6,370 @@ done, `[ ]` pending.
 
 ---
 
-## Punto 3 — Rendimiento / escala
+## Item 3 — Performance / scale
 
-**Estado:** implementado el 3.2 y el 3.1; el 3.3 tiene la base hecha y queda la
-carga inicial progresiva. Orden aplicado: **3.2 → 3.1 → 3.3**.
+**Status:** 3.2 and 3.1 implemented; 3.3 has the groundwork in place and the
+progressive initial load remains. Order applied: **3.2 → 3.1 → 3.3**.
 
-### 3.2 Layout persistente por dataset — ✅ HECHO
+### 3.2 Persistent per-dataset layout — ✅ DONE
 
-- [x] **Modelo + migración Alembic**: tabla `graph_layouts` (1 fila por dataset,
-      `positions` JSONB) y migración `0003_add_graph_layouts`.
+- [x] **Model + Alembic migration**: `graph_layouts` table (1 row per dataset,
+      `positions` JSONB) and migration `0003_add_graph_layouts`.
       `backend/app/models.py`, `backend/alembic/versions/0003_add_graph_layouts.py`.
-- [x] **Endpoints**: `GET /api/graph/{id}/layout` y
-      `PUT /api/graph/{id}/layout` (solo posiciones `{node_id: {x, y}}`).
+- [x] **Endpoints**: `GET /api/graph/{id}/layout` and
+      `PUT /api/graph/{id}/layout` (positions only, `{node_id: {x, y}}`).
       `backend/app/routers/graph.py`, `backend/app/schemas.py`.
-- [x] **Aplicar el layout guardado al cargar**: `GraphView` pide grafo y layout en
-      paralelo y usa las posiciones como preset del layout force.
-      `frontend/src/components/GraphView.jsx`.
-- [x] **Guardado debounced** (800 ms) al terminar un layout y al soltar un nodo
-      (`layoutstop` + `dragfree`).
-- [x] **Botón "Reset layout"**: borra el layout guardado y relanza el force.
-- [x] **Borrado en cascada**: al eliminar un dataset se borra su layout.
+- [x] **Apply the saved layout on load**: `GraphView` requests the graph and the
+      layout in parallel and uses the positions as the preset for the force
+      layout. `frontend/src/components/GraphView.jsx`.
+- [x] **Debounced save** (800 ms) when a layout finishes and when a node is
+      released (`layoutstop` + `dragfree`).
+- [x] **"Reset layout" button**: deletes the saved layout and re-runs the force
+      layout.
+- [x] **Cascade delete**: deleting a dataset deletes its layout.
       `backend/app/routers/datasets.py`.
-- [x] **Tests**: guardar/leer layout y 404 en dataset inexistente.
+- [x] **Tests**: save/read layout and 404 for a nonexistent dataset.
 
-### 3.1 Clustering (colapsar subárboles grandes) — ✅ HECHO
+### 3.1 Clustering (collapse large subtrees) — ✅ DONE
 
-- [x] **Detección de hubs y colapso (solo artefactos)**: en `GraphBuilder`, un
-      proceso con más de `CLUSTER_MIN_CHILDREN` hijos **artefacto** *exclusivos*
-      (un solo padre, `group != "process"`) los agrupa en un placeholder. **Los
-      procesos y sus aristas `Spawns` nunca se colapsan**, así que el grafo sigue
-      conectado; los artefactos son hojas, así que quitar uno exclusivo nunca deja
-      una arista colgando, y un artefacto compartido permanece.
+- [x] **Hub detection and collapse (artifacts only)**: in `GraphBuilder`, a
+      process with more than `CLUSTER_MIN_CHILDREN` **artifact** children that are
+      *exclusively* owned (single parent, `group != "process"`) groups them into a
+      placeholder. **Processes and their `Spawns` edges are never collapsed**, so
+      the graph stays connected; artifacts are leaves, so removing an exclusive one
+      never leaves a dangling edge, and a shared artifact stays.
       `backend/app/parsers/builder.py`.
-- [x] **Fix de conectividad** (tras detectarse en pruebas): la versión inicial
-      colapsaba subárboles enteros, incluidos procesos, y al desaparecer las
-      aristas `Spawns` el grafo parecía desconectado. Ahora solo se colapsan
-      artefactos hoja.
-- [x] **Payload ligero**: los nodos colapsados no viajan en `elements`; el
-      placeholder lleva `isCluster`, `clusterCount` y `parentId`. Los `raw_logs` y
-      el `search_index` se siguen construyendo para poder expandir y buscar.
-- [x] **Expandir bajo demanda**: `GET /api/graph/{id}/clusters/{cluster_id}`
-      devuelve nodos y aristas ocultos. `backend/app/routers/graph.py`.
-- [x] **Render y UX**: grupo `cluster` (rombo) + entrada de leyenda, click para
-      expandir, panel de clusters expandidos con "Collapse All".
+- [x] **Connectivity fix** (after being found in testing): the initial version
+      collapsed entire subtrees, including processes, and when the `Spawns` edges
+      disappeared the graph looked disconnected. Now only leaf artifacts are
+      collapsed.
+- [x] **Lightweight payload**: collapsed nodes do not travel in `elements`; the
+      placeholder carries `isCluster`, `clusterCount` and `parentId`. `raw_logs`
+      and `search_index` are still built so they can be expanded and searched.
+- [x] **Expand on demand**: `GET /api/graph/{id}/clusters/{cluster_id}` returns
+      the hidden nodes and edges. `backend/app/routers/graph.py`.
+- [x] **Render and UX**: `cluster` group (diamond) + legend entry, click to
+      expand, panel of expanded clusters with "Collapse All".
       `frontend/src/components/cytoscapeStyles.js`, `GraphView.jsx`.
-- [x] **Posicionado al expandir**: los nodos nuevos se disponen en anillo
-      alrededor del hub; no se relanza el layout completo.
-- [x] **Tests**: colapso y expansión de artefactos de un hub; un artefacto
-      compartido **no** se colapsa; los procesos **nunca** se colapsan.
+- [x] **Positioning on expand**: new nodes are arranged in a ring around the hub;
+      the full layout is not re-run.
+- [x] **Tests**: collapse and expansion of a hub's artifacts; a shared artifact is
+      **not** collapsed; processes are **never** collapsed.
 
-### 3.3 Vecinos lazy / paginación — 🚧 PARCIAL
+### 3.3 Lazy neighbours / pagination — 🚧 PARTIAL
 
-- [x] **Endpoint de vecindario** (base para la carga progresiva):
-      `GET /api/graph/{id}/neighbors?element_id=…&depth=1..3`, con tope de
-      `MAX_NEIGHBOR_NODES` (2000) y flag `truncated`.
-      `backend/app/routers/graph.py`. Sigue disponible (sin usar por la UI).
-- [x] **Botón "Reveal"** en Node Details (opción 1): vuelve a mostrar el
-      vecindario a 1 salto que esté oculto por "Hide", los filtros de
-      usuario/PID/evento, la búsqueda global o el foco. Es **client-side** (no
-      llama al servidor) y actúa como "Unhide All" dirigido.
-- [x] **Base reutilizable de fusión**: los elementos nuevos (clusters) se añaden
-      con posiciones calculadas.
-- [ ] **Carga inicial progresiva**: no enviar todo el grafo en datasets muy
-      grandes; cargar raíces y expandir vecindario a demanda (reutilizando el
-      endpoint y la fusión). Requiere rediseñar filtros y layout sobre un grafo
-      parcial (pendiente).
+- [x] **Neighbourhood endpoint** (basis for progressive loading):
+      `GET /api/graph/{id}/neighbors?element_id=…&depth=1..3`, capped at
+      `MAX_NEIGHBOR_NODES` (2000) with a `truncated` flag.
+      `backend/app/routers/graph.py`. Still available (unused by the UI).
+- [x] **"Reveal" button** in Node Details (option 1): re-shows the 1-hop
+      neighbourhood that is hidden by "Hide", the user/PID/event filters, the
+      global search or focus. It is **client-side** (does not call the server) and
+      acts as a targeted "Unhide All".
+- [x] **Reusable merge basis**: new elements (clusters) are added with computed
+      positions.
+- [ ] **Progressive initial load**: do not send the whole graph for very large
+      datasets; load roots and expand the neighbourhood on demand (reusing the
+      endpoint and the merge). Requires rethinking filters and layout over a
+      partial graph (pending).
 
 ---
 
-## Filtro por rango temporal en el grafo — ✅ HECHO
+## Time-range filter in the graph — ✅ DONE
 
-**Estado:** implementado. El grafo se puede filtrar por una ventana de tiempo
-(start/end) y la UI indica el rango total disponible del export.
+**Status:** implemented. The graph can be filtered by a time window (start/end)
+and the UI shows the total range available in the export.
 
-**Objetivo:** graficar solo los eventos dentro de un rango de tiempo, indicando
-start/end, sin perder la búsqueda global.
+**Goal:** graph only the events inside a time range, showing start/end, without
+losing global search.
 
 ### Backend
 
-- [x] **Filtrado por `event_time`**: `_build_graph_payload` acepta `from_ms`/
-      `to_ms` (epoch ms) y añade `WHERE event_time >= from AND <= to`. Los
-      eventos sin fecha (`event_time IS NULL`) se excluyen cuando hay ventana.
+- [x] **Filtering by `event_time`**: `_build_graph_payload` accepts `from_ms`/
+      `to_ms` (epoch ms) and adds `WHERE event_time >= from AND <= to`. Events
+      without a date (`event_time IS NULL`) are excluded when a window is set.
       `backend/app/routers/graph.py`.
-- [x] **Params `from`/`to`** en `generate_graph`, `get_elements`,
-      `get_element_logs`, `get_cluster` y `get_neighbors`; el `search` global se
-      mantiene sin filtro de tiempo.
-- [x] **Cache por rango**: `graph_cache` pasa a clave `(dataset_id, from_ms,
-      to_ms)`; `invalidate(dataset_id)` borra todas las ventanas del dataset.
+- [x] **`from`/`to` params** on `generate_graph`, `get_elements`,
+      `get_element_logs`, `get_cluster` and `get_neighbors`; the global `search`
+      is kept without a time filter.
+- [x] **Cache by range**: `graph_cache` moves to the key `(dataset_id, from_ms,
+      to_ms)`; `invalidate(dataset_id)` clears all windows of the dataset.
       `backend/app/routers/graph_cache.py`.
-- [x] **Rango disponible**: `GET /api/graph/{id}/time-range` → `{min_ms, max_ms}`
-      (agregado `MIN/MAX(event_time)` del dataset completo; `null` si no hay
-      eventos con fecha).
+- [x] **Available range**: `GET /api/graph/{id}/time-range` → `{min_ms, max_ms}`
+      (`MIN/MAX(event_time)` aggregate over the whole dataset; `null` when there
+      are no dated events).
 
 ### Frontend
 
-- [x] **Picker start/end** (`datetime-local`) + botones **Apply** y **Clear** en
-      la barra del grafo. `frontend/src/components/GraphView.jsx`.
-- [x] **Rango disponible visible** junto a los inputs (`Available range: … → …`)
-      y como `min`/`max` de los campos, calculado sobre el dataset completo (sin
-      filtro).
-- [x] **Recarga al aplicar**: cambiar el rango recarga el grafo (reset de
-      selección/layout/truncado). El layout guardado solo se restaura sin filtro.
-- [x] **Paginación y evidencia coherentes**: "Cargar más/todos", `getCluster` y
-      `getElementLogs` propagan la ventana activa.
+- [x] **start/end picker** (`datetime-local`) + **Apply** and **Clear** buttons in
+      the graph toolbar. `frontend/src/components/GraphView.jsx`.
+- [x] **Visible available range** next to the inputs (`Available range: … → …`)
+      and as the fields' `min`/`max`, computed over the whole dataset (without a
+      filter).
+- [x] **Reload on apply**: changing the range reloads the graph (reset of
+      selection/layout/truncation). The saved layout is only restored without a
+      filter.
+- [x] **Consistent pagination and evidence**: "Load more/all", `getCluster` and
+      `getElementLogs` propagate the active window.
 - [x] **`api` (`frontend/src/api/client.js`)**: `getGraph`/`getGraphElements`/
-      `getElementLogs`/`getCluster`/`getNeighbors` aceptan `{from, to}`; nuevo
+      `getElementLogs`/`getCluster`/`getNeighbors` accept `{from, to}`; new
       `getTimeRange`.
 
 ### Testing
 
-- `backend/tests/test_graph_time.py`: filtrado por `from`/`to`, `time-range`
-  (span completo e ignorando eventos sin fecha) y 404 de dataset inexistente.
-- `backend/tests/test_graph_cache.py`: adaptado a claves `(dataset_id, from, to)`
-  y borrado de todas las ventanas al invalidar un dataset.
-- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+- `backend/tests/test_graph_time.py`: filtering by `from`/`to`, `time-range`
+  (full span and ignoring events without a date) and 404 for a nonexistent
+  dataset.
+- `backend/tests/test_graph_cache.py`: adapted to `(dataset_id, from, to)` keys
+  and clearing all windows when invalidating a dataset.
+- Frontend: `npm run lint` (0 errors) + `npm run build` OK.
 
 ---
 
-## Tiempo del elemento en Node Details — ✅ HECHO
+## Element time in Node Details — ✅ DONE
 
-**Estado:** implementado. El panel de detalles muestra cuándo se observó por
-primera y por última vez el nodo/edge seleccionado.
+**Status:** implemented. The details panel shows when the selected node/edge was
+first and last observed.
 
-**Objetivo:** ver el instante del elemento seleccionado en formato
+**Goal:** see the instant of the selected element in the format
 `dd/mm/yyyy, HH:MM:SS`.
 
 ### Backend
 
-- [x] **`first_time`/`last_time` por elemento**: `_append_raw_log` (punto único
-      donde cada evento se adjunta a un nodo/arista) registra el `min`/`max` de
-      `event_time`, ignorando los eventos sin fecha. `backend/app/parsers/builder.py`.
-- [x] **Tiempo por evento**: `GraphBuilder.current_event_time` se fija en
-      `_build_graph_payload` con `log.event_time` antes de cada `parse(...)`.
+- [x] **`first_time`/`last_time` per element**: `_append_raw_log` (the single
+      point where each event is attached to a node/edge) records the `min`/`max`
+      of `event_time`, ignoring events without a date. `backend/app/parsers/builder.py`.
+- [x] **Time per event**: `GraphBuilder.current_event_time` is set in
+      `_build_graph_payload` from `log.event_time` before each `parse(...)`.
       `backend/app/routers/graph.py`.
-- [x] **Sin raw logs en `elements`** (invariante 8): solo se añade el epoch ms
-      normalizado a `data`, no el evento crudo.
+- [x] **No raw logs in `elements`** (invariant 8): only the normalised epoch ms is
+      added to `data`, not the raw event.
 
 ### Frontend
 
-- [x] **Fila "Time"** en Node Details (primera aparición) y **"Last activity"**
-      solo cuando difiere de la primera. `frontend/src/components/GraphView.jsx`.
-- [x] **Formato** `dd/mm/yyyy, HH:MM:SS` en zona horaria local.
-- [x] Elementos sin eventos con fecha: no se muestra nada de tiempo.
+- [x] **"Time" row** in Node Details (first appearance) and **"Last activity"**
+      only when it differs from the first. `frontend/src/components/GraphView.jsx`.
+- [x] **Format** `dd/mm/yyyy, HH:MM:SS` in the local time zone.
+- [x] Elements without dated events: no time is shown.
 
 ### Testing
 
-- `backend/tests/test_graph_time.py`: `first_time`/`last_time` de nodo/arista con
-  varios eventos y ausencia de tiempo en elementos sin fecha.
-- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+- `backend/tests/test_graph_time.py`: `first_time`/`last_time` of a node/edge with
+  several events and absence of time on elements without a date.
+- Frontend: `npm run lint` (0 errors) + `npm run build` OK.
 
 ---
 
-## Visualización del PID de proceso sin host — ✅ HECHO
+## Process PID display without host — ✅ DONE
 
-**Estado:** implementado. Los nodos proceso muestran solo el PID (`600`) en vez
-de `pid@host` (`600@H1`); el host sigue en su propia línea `🖥️ H1`.
+**Status:** implemented. Process nodes show only the PID (`600`) instead of
+`pid@host` (`600@H1`); the host stays on its own `🖥️ H1` line.
 
-**Objetivo:** quitar el ruido del sufijo `@host` en la etiqueta/título del nodo.
+**Goal:** remove the noise of the `@host` suffix in the node label/title.
 
-### Cambios
+### Changes
 
 - [x] **`backend/app/parsers/builder.py`** (`get_or_create_process_node`):
-      `label`/`title` usan el PID pelado (`data.pid`); el **id** del nodo sigue
-      siendo `pid@host` (invariante 2 intacto: sin colisiones entre hosts ni
-      migración de layouts).
-- [x] **`frontend/src/components/GraphView.jsx`**: el filtro "Process IDs (PIDs)"
-      muestra `process_name (600)` usando `data.pid`; el mapa `pids` sigue
-      claveado por `id` (la lógica de ocultar no cambia).
-- [x] **Timeline** (`_timeline_element_ids`) sin cambios: sigue componiendo
-      `pid@host` para enfocar el nodo correcto.
+      `label`/`title` use the bare PID (`data.pid`); the node **id** remains
+      `pid@host` (invariant 2 intact: no collisions between hosts and no layout
+      migration).
+- [x] **`frontend/src/components/GraphView.jsx`**: the "Process IDs (PIDs)"
+      filter shows `process_name (600)` using `data.pid`; the `pids` map is still
+      keyed by `id` (the hiding logic does not change).
+- [x] **Timeline** (`_timeline_element_ids`) unchanged: it still composes
+      `pid@host` to focus the correct node.
 
 ### Testing
 
-- `backend/tests/test_builder.py`: el id sigue `100@hostA`, `data.pid == "100"` y
-  `label`/`title` muestran `100` (no `100@hostA`).
-- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+- `backend/tests/test_builder.py`: the id remains `100@hostA`, `data.pid == "100"`
+  and `label`/`title` show `100` (not `100@hostA`).
+- Frontend: `npm run lint` (0 errors) + `npm run build` OK.
 
 ---
 
-## Detección de patrones sospechosos + risk score
+## Suspicious-pattern detection + risk score
 
-**Estado:** planificado (sin implementar). Es la siguiente idea fuera del punto 3.
+**Status:** planned (not implemented). It is the next idea outside item 3.
 
-**Objetivo:** analizar el grafo ya construido y detectar patrones sospechosos
-conocidos (LOLBins, ofuscación, inyección, persistencia, acceso a credenciales,
-descubrimiento, escalada), produciendo una lista de hallazgos con severidad, MITRE
-y evidencia, más un **risk score** agregado (0–100) por dataset y un riesgo por
-nodo para colorearlo.
+**Goal:** analyse the already-built graph and detect known suspicious patterns
+(LOLBins, obfuscation, injection, persistence, credential access, discovery,
+escalation), producing a list of findings with severity, MITRE and evidence, plus
+an aggregated **risk score** (0–100) per dataset and a per-node risk used for
+colouring.
 
-### Enfoque arquitectónico
+### Architectural approach
 
-- **Módulo nuevo y puro** `backend/app/analyzers/` que opera sobre el grafo ya
-  construido (`nodes_dict` + `edges_list`), sin tocar HTTP ni raw logs: fácil de
-  testear en aislamiento (como los tests puros de parsers).
-  - `base.py`: dataclasses `Finding` y `Rule`, registro de reglas, y
+- **New, pure module** `backend/app/analyzers/` that operates on the
+  already-built graph (`nodes_dict` + `edges_list`), without touching HTTP or raw
+  logs: easy to test in isolation (like the pure parser tests).
+  - `base.py`: `Finding` and `Rule` dataclasses, rule registry, and
     `analyze(graph) -> (risk_score, findings)`.
-  - `rules/`: una regla por patrón (funciones puras).
-  - `data/`: listas curadas versionables (LOLBins, rutas de persistencia,
-    binarios de credenciales, patrones de command line).
-- **Cálculo on-demand + reutilización del cache de grafos** (`graph_cache.py`):
-  no se crea tabla nueva ni migración Alembic en v1.
-- **La detección se deriva del grafo**, no de los raw logs; los artefactos y
-  procesos ya exponen `group`, `process_name`, `actions` y `event_simplename`.
-  Se respeta el invariante 8 (nada de raw logs en `elements`).
+  - `rules/`: one rule per pattern (pure functions).
+  - `data/`: curated, versionable lists (LOLBins, persistence paths, credential
+    binaries, command-line patterns).
+- **On-demand computation + reuse of the graph cache** (`graph_cache.py`): no new
+  table or Alembic migration in v1.
+- **Detection is derived from the graph**, not from raw logs; artifacts and
+  processes already expose `group`, `process_name`, `actions` and
+  `event_simplename`. Invariant 8 is respected (no raw logs in `elements`).
 
-### Modelo de datos de entrada (ya disponible)
+### Input data model (already available)
 
-| Fuente | Campos usados | Para |
+| Source | Fields used | For |
 | --- | --- | --- |
-| Nodo proceso | `process_name`, `label`, `username`, `hostname`, `actions[]` | LOLBins, credenciales, descubrimiento, escalada |
-| Nodo artefacto | `group` (file/registry/network/module/powershell/commandline…), `label`, `title` | persistencia, ofuscación, cradle |
-| Arista | `event_simplename`, `source`, `target`, `label` | inyección, persistencia, encadenamiento |
+| Process node | `process_name`, `label`, `username`, `hostname`, `actions[]` | LOLBins, credentials, discovery, escalation |
+| Artifact node | `group` (file/registry/network/module/powershell/commandline…), `label`, `title` | persistence, obfuscation, cradle |
+| Edge | `event_simplename`, `source`, `target`, `label` | injection, persistence, chaining |
 
-### Framework de reglas
+### Rule framework
 
 - `Finding`: `rule_id`, `name`, `severity` (`low|medium|high|critical`),
-  `description`, `node_ids`, `edge_ids`, `mitre` (táctica/técnica), `evidence`.
+  `description`, `node_ids`, `edge_ids`, `mitre` (tactic/technique), `evidence`.
 - `Rule`: `id`, `name`, `severity`, `matcher(graph) -> list[Finding]`,
   `references`.
-- Registro declarativo: añadir una regla = un archivo + registro; sin tocar el
-  endpoint.
-- Los `evt_type`/`group` exactos de inyección y persistencia se **enumeran desde
-  `defender.py`/`falcon.py`** (invariante 1: detección por campos, no por strings
-  sueltos).
+- Declarative registry: adding a rule = one file + registration; no need to touch
+  the endpoint.
+- The exact `evt_type`/`group` values for injection and persistence are
+  **enumerated from `defender.py`/`falcon.py`** (invariant 1: detection by fields,
+  not loose strings).
 
-### Catálogo inicial de reglas
+### Initial rule catalogue
 
-| # | Patrón | Señal en el grafo | Severidad |
+| # | Pattern | Signal in the graph | Severity |
 | --- | --- | --- | --- |
-| 1 | **LOLBin** (rundll32, mshta, regsvr32, certutil, msbuild, cscript, wscript, cmstp…) | `process_name` contra lista curada | alta |
-| 2 | **PowerShell ofuscado** (`-enc`, `-command`, cradle de descarga) | artefacto `powershell`/`commandline` o `actions` del proceso | alta |
-| 3 | **Inyección** (CreateRemoteThread / módulo en otro proceso) | arista con `event_simplename` de inyección entre 2 procesos | crítica |
-| 4 | **Persistencia** (Run/RunOnce, ScheduledTask, schtasks, startup) | artefacto `registry` con ruta de arranque o arista `ScheduledTaskModified` | alta |
-| 5 | **Acceso a credenciales** (lsass, mimikatz, dump) | `process_name`/`commandline` contra lista | crítica |
-| 6 | **Descubrimiento** (whoami, net view, nltest, adfind) | `process_name`/`commandline` | media |
-| 7 | **Escalada / UAC bypass** | eventos concretos + combinación de procesos | alta |
+| 1 | **LOLBin** (rundll32, mshta, regsvr32, certutil, msbuild, cscript, wscript, cmstp…) | `process_name` against a curated list | high |
+| 2 | **Obfuscated PowerShell** (`-enc`, `-command`, download cradle) | `powershell`/`commandline` artifact or the process's `actions` | high |
+| 3 | **Injection** (CreateRemoteThread / module in another process) | edge with an injection `event_simplename` between 2 processes | critical |
+| 4 | **Persistence** (Run/RunOnce, ScheduledTask, schtasks, startup) | `registry` artifact with a startup path or `ScheduledTaskModified` edge | high |
+| 5 | **Credential access** (lsass, mimikatz, dump) | `process_name`/`commandline` against a list | critical |
+| 6 | **Discovery** (whoami, net view, nltest, adfind) | `process_name`/`commandline` | medium |
+| 7 | **Escalation / UAC bypass** | specific events + combination of processes | high |
 
 ### Risk score
 
-- Peso por severidad (baja/media/alta/crítica) → score agregado normalizado
-  **0–100** con tope, fórmula determinista y documentada.
-- **Score por nodo** para colorear procesos/artefactos implicados (aro/brillo).
+- Weight per severity (low/medium/high/critical) → aggregated score normalised
+  **0–100** with a cap, deterministic and documented formula.
+- **Per-node score** to colour the processes/artifacts involved (ring/glow).
 
 ### API
 
-- `GET /api/graph/{id}/detections` → `{ risk_score, findings[] }` (requiere auth,
-  como el resto de rutas de datos).
-- `risk_score` ligero incluido en el payload principal para pintar un badge sin
-  esperar al endpoint.
-- Detalle de evidencia reutilizando `/api/graph/{id}/element-logs` (no duplicar raw
+- `GET /api/graph/{id}/detections` → `{ risk_score, findings[] }` (requires auth,
+  like the rest of the data routes).
+- Lightweight `risk_score` included in the main payload to paint a badge without
+  waiting for the endpoint.
+- Evidence detail reusing `/api/graph/{id}/element-logs` (do not duplicate raw
   logs).
 
 ### Frontend
 
-- Panel **"Detections"** con hallazgos ordenados por severidad; click → enfoca y
-  resalta los nodos implicados en el grafo.
-- Aro rojo/naranja en nodos con riesgo; **badge** con el risk score en la cabecera
-  del dataset.
-- Toggle para mostrar/ocultar el resaltado.
+- **"Detections"** panel with findings sorted by severity; click → focus and
+  highlight the nodes involved in the graph.
+- Red/orange ring on nodes with risk; **badge** with the risk score in the
+  dataset header.
+- Toggle to show/hide the highlighting.
 
-### Configuración
+### Configuration
 
-- Toggle `DETECTIONS_ENABLED` (por defecto activo).
-- Listas curadas en `backend/app/analyzers/data/` (editables sin tocar código).
-- Pesos de severidad y umbral documentados en el módulo.
+- `DETECTIONS_ENABLED` toggle (enabled by default).
+- Curated lists in `backend/app/analyzers/data/` (editable without touching code).
+- Severity weights and threshold documented in the module.
 
 ### Testing
 
-- Tests puros por regla: grafo sintético que **dispara** y que **no dispara** cada
-  patrón (fixture `GraphBuilder` reutilizable).
-- Tests HTTP del endpoint: auth, grafo vacío, grafo con hallazgos.
-- Sin fallar por los warnings de `react` tolerados del frontend.
+- Pure tests per rule: a synthetic graph that **triggers** and one that **does
+  not trigger** each pattern (reusable `GraphBuilder` fixture).
+- HTTP tests of the endpoint: auth, empty graph, graph with findings.
+- Without failing over the tolerated frontend `react` warnings.
 
-### Orden de implementación
+### Implementation order
 
-1. `base.py` + `data/` (listas curadas).
-2. Reglas + tests puros.
-3. Endpoint + schema + integración con el cache.
-4. Panel frontend + resaltado + badge.
-5. Docs (`AGENTS.md`, `README.md`) y tildar esta sección.
+1. `base.py` + `data/` (curated lists).
+2. Rules + pure tests.
+3. Endpoint + schema + integration with the cache.
+4. Frontend panel + highlighting + badge.
+5. Docs (`AGENTS.md`, `README.md`) and tick this section.
 
-### Decisiones por defecto (a confirmar)
+### Default decisions (to be confirmed)
 
-1. **Fuente de conocimiento:** listas curadas embebidas + data files versionables
-   (recomendado), ampliable a archivos configurables.
-2. **Persistencia:** on-demand + cache, sin tabla ni migración (recomendado) vs.
-   tabla `detections` con historial/auditoría.
-3. **Score:** índice agregado 0–100 (recomendado) además de severidad por
-   hallazgo.
-4. **Reglas iniciales:** empezar por **LOLBins + inyección + persistencia** y
-   crecer (vs. las 7 de golpe).
-5. **UI:** panel lateral + badge/coloreado (recomendado) vs. solo colorear nodos.
+1. **Knowledge source:** embedded curated lists + versionable data files
+   (recommended), expandable to configurable files.
+2. **Persistence:** on-demand + cache, with no table or migration (recommended)
+   vs. a `detections` table with history/auditing.
+3. **Score:** aggregated 0–100 index (recommended) in addition to per-finding
+   severity.
+4. **Initial rules:** start with **LOLBins + injection + persistence** and grow
+   (vs. all 7 at once).
+5. **UI:** side panel + badge/colouring (recommended) vs. colouring nodes only.
 
-### Ficheros previstos
+### Planned files
 
-- Nuevos: `backend/app/analyzers/{base.py,rules/,data/}`,
+- New: `backend/app/analyzers/{base.py,rules/,data/}`,
   `backend/tests/test_analyzers.py`.
-- Modificados: `backend/app/routers/graph.py`, `backend/app/schemas.py`,
+- Modified: `backend/app/routers/graph.py`, `backend/app/schemas.py`,
   `frontend/src/api/client.js`, `frontend/src/components/GraphView.jsx`
-  (panel/leyenda), posiblemente `frontend/src/components/NodeDetails…` y
+  (panel/legend), possibly `frontend/src/components/NodeDetails…` and
   `.env.example`, `README.md`, `AGENTS.md`.
 
 ---
 
-## Fuzzing de parsers con Hypothesis — ✅ HECHO
+## Parser fuzzing with Hypothesis — ✅ DONE
 
-**Estado:** implementado. Suite de tests *property-based* añadida; el fuzzing ya
-destapó y arregló un bug real de codificación (ver "Resultado").
+**Status:** implemented. A *property-based* test suite was added; the fuzzing
+already surfaced and fixed a real encoding bug (see "Result").
 
-**Objetivo:** garantizar con tests *property-based* que el pipeline de parsing
-(puro, sin HTTP ni DB) es robusto ante cualquier entrada y que los invariantes del
-grafo se mantienen siempre. Busca dos propiedades:
+**Goal:** guarantee with *property-based* tests that the parsing pipeline (pure,
+no HTTP or DB) is robust against any input and that the graph invariants always
+hold. It looks for two properties:
 
-1. **Nunca crashea** con excepciones no esperadas ante eventos desconocidos, tipos
-   raros (`None`, int, listas), JSON roto o bytes corruptos.
-2. **El grafo sale íntegro:** serializable a JSON, ids únicos, sin aristas
-   colgantes y sin colapsar procesos.
+1. **Never crashes** with unexpected exceptions on unknown events, odd types
+   (`None`, int, lists), broken JSON or corrupt bytes.
+2. **The graph comes out intact:** JSON-serializable, unique ids, no dangling
+   edges and processes never collapsed.
 
-**Qué resuelve (valor):**
+**What it solves (value):**
 
-- **Crashes por tipos inesperados** que hoy serían un 500 (p. ej. `ImageFileName`
-  no-str y `.split()` en `falcon.py`).
-- **JSON/CSV malformado** que no se traduce a un `HTTPException` 400/413 limpio
-  (p. ej. `csv.Error`, `UnicodeDecodeError` sin capturar).
-- **Invariantes del grafo** que nadie comprueba de forma exhaustiva: ids únicos,
-  sin colisión nodo/arista, sin aristas a nodos inexistentes, clustering no
-  destructivo.
-- **Seguridad/disponibilidad:** los parsers consumen ficheros subidos por el
-  usuario; un input que provoque excepción no controlada o consumo desmedido es un
-  vector de DoS.
-- **Red de seguridad permanente** en CI contra regresiones al añadir vendors o
-  tipos de evento con accesos no defensivos.
+- **Crashes from unexpected types** that today would be a 500 (e.g. a non-str
+  `ImageFileName` and `.split()` in `falcon.py`).
+- **Malformed JSON/CSV** that does not translate into a clean `HTTPException`
+  400/413 (e.g. `csv.Error`, uncaught `UnicodeDecodeError`).
+- **Graph invariants** that no one checks exhaustively: unique ids, no
+  node/edge collision, no edges to nonexistent nodes, non-destructive clustering.
+- **Security/availability:** the parsers consume user-uploaded files; an input
+  that triggers an uncontrolled exception or unbounded consumption is a DoS
+  vector.
+- **A permanent safety net** in CI against regressions when adding vendors or
+  event types with non-defensive accesses.
 
-### Targets (funciones puras) y su oráculo
+### Targets (pure functions) and their oracle
 
-| Target | Entrada fuzzeada | Invariante a verificar |
+| Target | Fuzzed input | Invariant to verify |
 | --- | --- | --- |
-| `vendor.get_vendor` / `extract_event_type` / `is_falcon_event` | `Any` (dict, list, `None`, int…) | no lanzan; solo constantes conocidas |
-| `builder.get_additional_fields_dict` | dict con `AdditionalFields` anidado/JSON | no lanza; devuelve `dict` |
-| `builder.hash_str` / `string_hash` | `str` / `Any` | no lanzan; hex de longitud fija |
-| `defender.parse_defender_event` / `falcon.parse_falcon_event` | `event` JSON-like + `evt_type` + ids (`None`/int/str) | no lanzan; el grafo posterior es JSON-serializable |
-| `builder.GraphBuilder.build_cytoscape_elements` | builder poblado por los pasos anteriores | `json.dumps` OK; ids de nodo y arista únicos y disjuntos; toda arista apunta a un nodo existente |
-| `builder.GraphBuilder._plan_clusters` | builder con muchos artefactos/procesos | solo colapsa `group != "process"`; procesos y aristas `Spawns` permanecen |
-| `datasets._parse_csv_rows` / `_parse_json_rows` / `_detect_encoding_and_check_size` | `bytes` arbitrarios | solo `HTTPException` 400/413, nunca otra excepción |
+| `vendor.get_vendor` / `extract_event_type` / `is_falcon_event` | `Any` (dict, list, `None`, int…) | do not raise; only known constants |
+| `builder.get_additional_fields_dict` | dict with nested/JSON `AdditionalFields` | does not raise; returns a `dict` |
+| `builder.hash_str` / `string_hash` | `str` / `Any` | do not raise; fixed-length hex |
+| `defender.parse_defender_event` / `falcon.parse_falcon_event` | JSON-like `event` + `evt_type` + ids (`None`/int/str) | do not raise; the resulting graph is JSON-serializable |
+| `builder.GraphBuilder.build_cytoscape_elements` | builder populated by the previous steps | `json.dumps` OK; node and edge ids unique and disjoint; every edge points to an existing node |
+| `builder.GraphBuilder._plan_clusters` | builder with many artifacts/processes | only collapses `group != "process"`; processes and `Spawns` edges remain |
+| `datasets._parse_csv_rows` / `_parse_json_rows` / `_detect_encoding_and_check_size` | arbitrary `bytes` | only `HTTPException` 400/413, never another exception |
 
-### Estrategias de Hypothesis (compartidas)
+### Hypothesis strategies (shared)
 
 `backend/tests/strategies.py`:
 
-- `json_value`: `st.recursive` con `none`/`bool`/`int`/`float`/`text` + listas y
-  dicts anidados (para `event`).
+- `json_value`: `st.recursive` with `none`/`bool`/`int`/`float`/`text` + nested
+  lists and dicts (for `event`).
 - `event_dict`: `st.dictionaries(st.text(), json_value, max_size=30)`.
-- `event_type`: mezcla de `st.sampled_from(KNOWN_*_TYPES)` (para ejercitar las
-  ramas reales) + `st.text()` (robustez ante desconocidos).
+- `event_type`: a mix of `st.sampled_from(KNOWN_*_TYPES)` (to exercise the real
+  branches) + `st.text()` (robustness against unknowns).
 - `element_id`: `st.one_of(st.none(), st.text(), st.integers())`.
-- Bytes: `st.binary(max_size=4096)` más prefijos que fuercen BOM, latin-1 y JSON
-  roto.
+- Bytes: `st.binary(max_size=4096)` plus prefixes that force BOM, latin-1 and
+  broken JSON.
 
-### Oráculos y estructura de tests
+### Oracles and test structure
 
-- Helper reutilizable `_assert_graph_invariants(payload)` (ids únicos, disjuntos,
-  sin aristas colgantes, clustering no destructivo).
-- Archivos nuevos:
+- Reusable helper `_assert_graph_invariants(payload)` (unique ids, disjoint, no
+  dangling edges, non-destructive clustering).
+- New files:
   - `backend/tests/strategies.py`
   - `backend/tests/test_fuzz_vendor.py`
   - `backend/tests/test_fuzz_builder.py`
@@ -375,232 +377,280 @@ grafo se mantienen siempre. Busca dos propiedades:
   - `backend/tests/test_fuzz_falcon.py`
   - `backend/tests/test_fuzz_upload.py`
 
-### Integración y CI
+### Integration and CI
 
-- Añadir `hypothesis` a `backend/requirements-dev.txt` (no a runtime).
-- Perfil determinista en `backend/tests/conftest.py` para evitar flakiness:
-  `max_examples=150`, `deadline=None`, `derandomize=True`, y desactivar los health
-  checks `too_slow`/`data_too_large`.
-- Hypothesis se integra con pytest; no hay conflicto con `ruff` (los decoradores
-  `@given`/`@settings` no son `B008`).
+- Add `hypothesis` to `backend/requirements-dev.txt` (not to runtime).
+- Deterministic profile in `backend/tests/conftest.py` to avoid flakiness:
+  `max_examples=150`, `deadline=None`, `derandomize=True`, and disable the
+  `too_slow`/`data_too_large` health checks.
+- Hypothesis integrates with pytest; there is no conflict with `ruff` (the
+  `@given`/`@settings` decorators are not `B008`).
 
-### Checklist (orden aplicado)
+### Checklist (order applied)
 
 - [x] `strategies.py` (`json_value`, `event_dict`, `graph_id`/`optional_id`,
       `event_type_strategy`, `DEFENDER_/FALCON_EVENT_TYPES`) + helper
       `assert_graph_invariants`.
-- [x] Fuzz de `vendor.py` y `builder.py` (hashes con valores no hashables,
-      `get_additional_fields_dict`, invariantes de `build_cytoscape_elements`).
-- [x] Fuzz de `parse_defender_event` / `parse_falcon_event` + invariantes del grafo.
-- [x] Fuzz de helpers de `datasets.py` (bytes) + 3 regresiones dirigidas.
-- [x] `hypothesis` en `requirements-dev.txt` + perfil `ci` en `conftest.py`.
-- [x] Endurecer el pipeline ante lo que afloró (ver abajo).
-- [x] Docs (`AGENTS.md` → Testing) y tildar la línea del `TODO`.
+- [x] Fuzz `vendor.py` and `builder.py` (hashes with non-hashable values,
+      `get_additional_fields_dict`, `build_cytoscape_elements` invariants).
+- [x] Fuzz `parse_defender_event` / `parse_falcon_event` + graph invariants.
+- [x] Fuzz `datasets.py` helpers (bytes) + 3 targeted regressions.
+- [x] `hypothesis` in `requirements-dev.txt` + `ci` profile in `conftest.py`.
+- [x] Harden the pipeline against what surfaced (see below).
+- [x] Docs (`AGENTS.md` → Testing) and tick the `TODO` line.
 
-### Resultado
+### Result
 
-`python -m pytest -q` → **81 tests OK** (antes 69) y `ruff check` limpio.
+`python -m pytest -q` → **81 tests OK** (up from 69) and `ruff check` clean.
 
-Bugs/endurecimientos que el fuzzing motivó:
+Bugs/hardenings the fuzzing motivated:
 
-- **UTF-8 truncado mal detectado** (bug encontrado por Hypothesis con `b"\xc2"`):
-  `_detect_encoding_and_check_size` no finalizaba el decoder incremental, así que
-  una secuencia multibyte incompleta al final del fichero se daba por válida como
-  `utf-8-sig` y reventaba al decodificar. Ahora se hace
-  `decoder.decode(b"", final=True)` y se cae a latin-1. Regresión en
-  `test_fuzz_upload.py`.
-- **`hash_str` / `string_hash`** toleran valores no hashables (dicts/listas):
-  coercionan a `str` *antes* del `lru_cache`.
-- **Parsers**: los campos de evento pasan por `as_text()` allí donde se usan como
-  texto (`.split`, `.replace`, `textwrap.fill`, slicing), de modo que un campo
-  `None`/número/lista no lanza.
-- **`build_cytoscape_elements` / `extract_event_type`**: tipo de retorno siempre
-  serializable / texto.
-- **Subida**: `csv.Error` (campo > `field_size_limit`) y `RecursionError` (JSON
-  muy anidado) se traducen a 400; `stream.detach()` tolera streams ya cerrados.
+- **Truncated UTF-8 misdetected** (bug found by Hypothesis with `b"\xc2"`):
+  `_detect_encoding_and_check_size` did not finalise the incremental decoder, so
+  an incomplete multibyte sequence at the end of the file was accepted as valid
+  `utf-8-sig` and blew up when decoding. Now `decoder.decode(b"", final=True)` is
+  done and it falls back to latin-1. Regression in `test_fuzz_upload.py`.
+- **`hash_str` / `string_hash`** tolerate non-hashable values (dicts/lists): they
+  coerce to `str` *before* the `lru_cache`.
+- **Parsers**: event fields go through `as_text()` wherever they are used as text
+  (`.split`, `.replace`, `textwrap.fill`, slicing), so a `None`/number/list field
+  does not raise.
+- **`build_cytoscape_elements` / `extract_event_type`**: return type is always
+  serializable / text.
+- **Upload**: `csv.Error` (field > `field_size_limit`) and `RecursionError` (very
+  nested JSON) are translated to 400; `stream.detach()` tolerates already-closed
+  streams.
 
-### Desviaciones del plan original
+### Deviations from the original plan
 
-- El helper se llama `assert_graph_invariants` (no `_assert_graph_invariants`).
-- Los ids usan `graph_id`/`optional_id`: incluyen enteros y `None`, y excluyen el
-  prefijo `edge_` (namespace reservado a las aristas).
-- Bytes `st.binary(max_size=2048)` (suficiente; el campo gigante de CSV y el JSON
-  profundamente anidado se cubren con regresiones dirigidas).
+- The helper is called `assert_graph_invariants` (not `_assert_graph_invariants`).
+- Ids use `graph_id`/`optional_id`: they include integers and `None`, and exclude
+  the `edge_` prefix (namespace reserved for edges).
+- Bytes `st.binary(max_size=2048)` (enough; the giant CSV field and the deeply
+  nested JSON are covered by targeted regressions).
 
 ---
 
-## Timeline / vista cronológica con reproducción — ✅ HECHO
+## Timeline / chronological view with playback — ✅ DONE
 
-**Estado:** implementado. Vista de línea temporal con reproducción y enlace al
-grafo.
+**Status:** implemented. Timeline view with playback highlighting on the graph.
 
-**Objetivo:** ver los eventos del dataset en orden cronológico y reproducir la
-secuencia (play/pausa, velocidad, scrubber), con filtros y salto al elemento en
-el grafo.
+**Goal:** see the dataset's events in chronological order and replay the sequence
+(play/pause, speed, scrubber), with filters and synchronized highlights on the
+graph.
 
 ### Backend
 
-- [x] **Timestamp normalizado**: `LogEvent.event_time` (epoch ms, nullable) +
-      migración `0004_add_event_time`. Se rellena en el upload con
-      `extract_timestamp` (`app/parsers/timestamps.py`), que entiende epoch
-      segundos/ms y ISO-8601, con campos de Falcon (`timestamp`) y Defender
-      (`Timestamp`/`EventTime`/…). Sin timestamp → `NULL` (orden de inserción).
-- [x] **Descripción de evento compartida**: `describe_event`
-      (`app/parsers/events.py`) extrae actor/target/usuario/host por vendor; lo
-      usan el grafo y la timeline (mismo criterio de campos, invariante 1).
+- [x] **Normalised timestamp**: `LogEvent.event_time` (epoch ms, nullable) +
+      migration `0004_add_event_time`. It is filled on upload with
+      `extract_timestamp` (`app/parsers/timestamps.py`), which understands epoch
+      seconds/ms and ISO-8601, with Falcon (`timestamp`) and Defender
+      (`Timestamp`/`EventTime`/…) fields. No timestamp → `NULL` (insertion order).
+- [x] **Shared event description**: `describe_event` (`app/parsers/events.py`)
+      extracts actor/target/user/host per vendor; used by the graph and the
+      timeline (same field criterion, invariant 1).
 - [x] **Endpoint**: `GET /api/graph/{id}/timeline?offset&limit&event_type&q&from&to`
-      (auth), paginado, orden `event_time NULLS LAST, id`. Devuelve entradas
-      compactas (hora, tipo, vendor, resumen, ids de elemento best-effort), nunca
-      raw logs (invariante 11).
+      (auth), paginated, order `event_time NULLS LAST, id`. Returns compact
+      entries (time, type, vendor, summary, graph-derived element ids), never
+      raw logs (invariant 11).
+- [x] **Exact graph/timeline correspondence**: `GraphBuilder` records a server-side
+      event→node/edge map; the timeline excludes events without graph elements,
+      applies the active graph time/search/event-type/user/PID filters before
+      counting and paging, and preserves events hidden only by clustering,
+      truncation, Hide or focus depth. `GET /api/graph/{id}/focus` loads a paged
+      or clustered timeline target on demand.
 
 ### Frontend
 
-- [x] **`TimelineView.jsx`**: lista cronológica con reproducción (play/pausa,
-      velocidad 0.5×–8×, scrubber, siguiente/anterior), búsqueda y filtro por
-      tipo de evento, y "Load more" (paginado).
-- [x] **Selector Grafo/Timeline** en `App.jsx`; al pulsar un evento se salta al
-      grafo y se enfoca el elemento (`focusElementId` → `GraphView`).
-- [x] **`api.getTimeline`** en `frontend/src/api/client.js` (única vía de API).
+- [x] **`TimelineView.jsx`**: chronological list with playback (play/pause, speed
+      0.5×–8×, scrubber, next/previous), search and filter by event type, and
+      "Load more" (paginated).
+- [x] **Graph/Timeline selector** in `App.jsx`; the graph stays mounted above the
+      timeline. Play, row clicks, next/previous and scrubbing highlight the
+      current event's real node or edge without switching tabs or rerunning the
+      layout. Playback temporarily reveals hidden endpoints without changing
+      manual filters, waits for paged/clustered elements to load before advancing
+      and prefetches further timeline pages.
+- [x] **`api.getTimeline`** in `frontend/src/api/client.js` (single API path).
+- [x] `App.jsx` retains the graph's applied range and identity/search filters
+      across tabs; `TimelineView.jsx` passes them to the API and clicking an entry
+      loads and focuses the real artifact or relationship when needed.
 
-### Configuración
+### Configuration
 
-- Sin variables nuevas obligatorias: `TIMELINE_DEFAULT_LIMIT` (200) y
-  `TIMELINE_MAX_LIMIT` (1000) son constantes del router.
+- No new mandatory variables: `TIMELINE_DEFAULT_LIMIT` (200) and
+  `TIMELINE_MAX_LIMIT` (1000) are router constants.
 
 ### Testing
 
-- `backend/tests/test_timestamps.py` (epoch s/ms, ISO con/sin zona, `None`).
-- `backend/tests/test_timeline.py` (orden con undated al final, paginación,
-  filtros, 404).
-- Frontend: `npm run lint` (0 errores) + `npm run build` OK.
+- `backend/tests/test_timestamps.py` (epoch s/ms, ISO with/without zone, `None`).
+- `backend/tests/test_timeline.py` (order with undated events last, pagination,
+  filters, 404).
+- Frontend: `npm run lint` (0 errors) + `npm run build` OK.
+- Playback cursor and pagination regression tests: `frontend/tests/timelinePlayback.test.js`
+  (`npm run test`), included in CI.
 
-### Pendiente / ideas (follow-up)
+### Pending / ideas (follow-up)
 
-- [ ] Mapeo completo evento→elemento (hoy solo procesos vía PID); enlazar
-      artefactos (files/registry/network) requiere que el builder registre el id
-      por evento.
-- [ ] Backfill de `event_time` para datasets subidos antes de la migración
-      `0004` (hoy caen a orden de inserción).
-- [ ] Filtro por rango temporal en la UI (el endpoint ya acepta `from`/`to`).
-- [ ] Reproducción que resalte en el grafo en tiempo real sin cambiar de vista.
-- [ ] Agrupar/colapsar eventos repetidos y "saltar al siguiente evento del mismo
-      proceso".
+- [x] Full event→element mapping, including artifacts and edges, is recorded by
+      the builder for graph-backed timeline entries.
+- [ ] Backfill `event_time` for datasets uploaded before migration `0004` (today
+      they fall back to insertion order).
+- [x] The graph's applied time range follows the user into the timeline view.
+- [x] Playback highlights the current event in the graph in real time without
+      changing view or rebuilding its layout.
+- [ ] Group/collapse repeated events and "jump to the next event of the same
+      process".
 
 ---
 
-## Revisión / correcciones (post-revisión) — ✅ HECHO
+## Review / corrections (post-review) — ✅ DONE
 
-**Estado:** revisión completa del proyecto. Corregidos los 4 bugs confirmados
-(crashes, duplicación de datos y colisión de procesos entre hosts con la
-misma PID), incluida la migración que invalida los layouts guardados con los
-ids antiguos.
+**Status:** full project review. Fixed the 4 confirmed bugs (crashes, data
+duplication and process collision between hosts with the same PID), including the
+migration that invalidates layouts saved with the old ids.
 
-### Bugs confirmados y corregidos
+### Confirmed and fixed bugs
 
-- [x] **`extract_timestamp` no era seguro ante `NaN`/`Infinity`/desbordes**
-      (`app/parsers/timestamps.py`). Un JSON con `NaN`/`Infinity` (que
-      `json.loads` acepta) o un número gigante lanzaba `ValueError`/
-      `OverflowError` al extraer el timestamp de **cada fila**, rompiendo el
-      upload completo con 500 y dejando un dataset huérfano. Ahora se valida
-      `math.isfinite` y un rango plausible (≤ 9999-12-31); no finito o fuera de
-      rango → `None`. Regresiones en `test_timestamps.py` y `test_timeline.py`
-      (upload con `NaN`).
-- [x] **`RegValueName` numérico en Falcon crasheaba** (`app/parsers/falcon.py`):
-      `len(raw_reg)` sobre un `int` → `TypeError`. Se aplica `as_text()` como al
-      resto de campos. Regresión en `test_parsers_smoke.py`.
-- [x] **Clusters duplicaban artefactos repetidos** (`_plan_clusters`,
-      `app/parsers/builder.py`): un hub con varias aristas al mismo artefacto
-      generaba `members` con duplicados, inflaba el umbral y producía nodos
-      repetidos al expandir (aunque `clusterCount` los contaba una vez). Se
-      deduplica preservando el orden. Regresión en `test_builder.py`.
-- [x] **Colisión de procesos entre hosts** (`get_or_create_process_node`,
-      `app/parsers/builder.py`): el id del nodo era solo `str(pid)`, así que el
-      mismo PID en dos máquinas colapsaba en un único nodo y se perdía un
-      proceso. Ahora el id es **host-scoped** (`pid@host`; sin host se mantiene
-      el PID crudo). Los parsers reutilizan el id devuelto para sus aristas y
-      para los artefactos que embeben el proceso; `_timeline_element_ids`
-      (`app/routers/graph.py`) compone igual. La migración
-      `0005_clear_graph_layouts` limpia los layouts guardados (posiciones por id
-      antiguo) para que el grafo se re-componga. Regresiones en `test_builder.py`
-      y `test_parsers_smoke.py`. **Cambio incompatible forward-only**: el grafo
-      se reconstruye on-demand, pero las posiciones guardadas se descartan.
+- [x] **`extract_timestamp` was not safe against `NaN`/`Infinity`/overflows**
+      (`app/parsers/timestamps.py`). JSON with `NaN`/`Infinity` (which `json.loads`
+      accepts) or a gigantic number raised `ValueError`/`OverflowError` when
+      extracting the timestamp of **each row**, breaking the whole upload with a
+      500 and leaving an orphaned dataset. Now `math.isfinite` and a plausible
+      range (≤ 9999-12-31) are validated; non-finite or out of range → `None`.
+      Regressions in `test_timestamps.py` and `test_timeline.py` (upload with
+      `NaN`).
+- [x] **Numeric `RegValueName` in Falcon crashed** (`app/parsers/falcon.py`):
+      `len(raw_reg)` on an `int` → `TypeError`. `as_text()` is applied as to the
+      rest of the fields. Regression in `test_parsers_smoke.py`.
+- [x] **Clusters duplicated repeated artifacts** (`_plan_clusters`,
+      `app/parsers/builder.py`): a hub with several edges to the same artifact
+      generated `members` with duplicates, inflated the threshold and produced
+      repeated nodes when expanding (although `clusterCount` counted them once).
+      It is deduplicated preserving order. Regression in `test_builder.py`.
+- [x] **Process collision between hosts** (`get_or_create_process_node`,
+      `app/parsers/builder.py`): the node id was only `str(pid)`, so the same PID
+      on two machines collapsed into a single node and a process was lost. Now the
+      id is **host-scoped** (`pid@host`; without a host the raw PID is kept). The
+      parsers reuse the returned id for their edges and for the artifacts that
+      embed the process; `_timeline_element_ids` (`app/routers/graph.py`) composes
+      the same. Migration `0005_clear_graph_layouts` clears the saved layouts
+      (positions by old id) so the graph is re-composed. Regressions in
+      `test_builder.py` and `test_parsers_smoke.py`. **Forward-only breaking
+      change**: the graph is rebuilt on demand, but the saved positions are
+      discarded.
 
-### Mejora menor aplicada
+### Minor improvement applied
 
-- [x] `pool_pre_ping=True` en `create_engine` (`app/database.py`) para evitar
-      conexiones stale tras un reinicio de Postgres.
+- [x] `pool_pre_ping=True` in `create_engine` (`app/database.py`) to avoid stale
+      connections after a Postgres restart.
 
-### Eventos de parser añadidos
+### Parser events added
 
-- [x] **Falcon `ScriptControlScanInfo`**: el script escaneado por ScriptControl
-      se mapea como artefacto `file` (nombre corto + ruta + SHA256 + snippet del
-      contenido, truncado a 200 chars) con una arista `Runs Script` desde el
-      proceso que lo ejecuta. Regresión en `test_parsers_smoke.py`.
-- [x] **Falcon `CreateSocket`**: la creación de un socket se mapea como artefacto
-      `network` keyed por proceso + (AddressFamily, SocketType, Protocol), con
-      `SocketType`/`Protocol` decodificados a etiquetas (`1→STREAM`, `6→TCP`, …) y
-      arista `Creates Socket` (`#00ffff`). Regresión en `test_parsers_smoke.py`.
-- [x] **Falcon `CriticalFileAccessed`**: el archivo crítico accedido se mapea
-      como artefacto `file` (mismo id `file_{hash(path)}` que el resto de eventos
-      de fichero) con ruta, `UID`, `GID` y `UnixMode` en el título, y arista
-      `Accesses Critical File` (`#ff4d4d`). Regresión en `test_parsers_smoke.py`.
-- [x] **Falcon `NetworkLinkConfigGetAddress`**: solo trae el proceso; se registra
-      el nodo y su acción (sin artefacto/arista), evitando que cuente como
-      unmapped. Regresión en `test_parsers_smoke.py`.
+- [x] **Falcon `ScriptControlScanInfo`**: the script scanned by ScriptControl is
+      mapped as a `file` artifact (short name + path + SHA256 + content snippet,
+      truncated to 200 chars) with a `Runs Script` edge from the process that
+      executes it. Regression in `test_parsers_smoke.py`.
+- [x] **Falcon `CreateSocket`**: socket creation is mapped as a `network` artifact
+      keyed by process + (AddressFamily, SocketType, Protocol), with
+      `SocketType`/`Protocol` decoded into labels (`1→STREAM`, `6→TCP`, …) and a
+      `Creates Socket` edge (`#00ffff`). Regression in `test_parsers_smoke.py`.
+- [x] **Falcon `CriticalFileAccessed`**: the accessed critical file is mapped as a
+      `file` artifact (same id `file_{hash(path)}` as the rest of the file events)
+      with path, `UID`, `GID` and `UnixMode` in the title, and an
+      `Accesses Critical File` edge (`#ff4d4d`). Regression in
+      `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkLinkConfigGetAddress`**: it only brings the process; the
+      node and its action are recorded (no artifact/edge), preventing it from
+      counting as unmapped. Regression in `test_parsers_smoke.py`.
 - [x] **Falcon `CriticalEnvironmentVariableChanged`**: `EnvironmentVariableName`/
-      `Value` se mapean como artefacto `registry` (`Env: NAME`) con arista
-      `Sets Env Var` (`#ff9933`). Regresión en `test_parsers_smoke.py`.
-- [x] **Falcon `NetworkListenIP4`**: el socket en listening se mapea como
-      artefacto `network` con el endpoint local (`LocalAddressIP4:LocalPort`,
-      mismo esquema de id que la red) y arista `Listens On` (`#00ffff`), con
-      `Protocol`/`ConnectionDirection` decodificados. Regresión en
+      `Value` are mapped as a `registry` artifact (`Env: NAME`) with a
+      `Sets Env Var` edge (`#ff9933`). Regression in `test_parsers_smoke.py`.
+- [x] **Falcon `NetworkListenIP4`**: the listening socket is mapped as a `network`
+      artifact with the local endpoint (`LocalAddressIP4:LocalPort`, same id
+      scheme as the network) and a `Listens On` edge (`#00ffff`), with
+      `Protocol`/`ConnectionDirection` decoded. Regression in
       `test_parsers_smoke.py`.
 
-### Recomendaciones no aplicadas (bajo impacto)
+### Recommendations not applied (low impact)
 
-- [ ] Extraer la constante `"Unknown"` duplicada en `events.py`/parsers.
-- [ ] JSON leniente: `_parse_json_rows` acepta comas ausentes y basura tras el
-      objeto; valorar modo estricto o contabilizar líneas malformadas.
-- [ ] Cache de grafo por-proceso (`graph_cache`): no se comparte con
-      `--workers N`; documentado, revisar si se escala.
-- [ ] Sin token CSRF (mitigado por allowlist CORS + `SameSite=lax` + httpOnly).
+- [ ] Extract the duplicated `"Unknown"` constant in `events.py`/parsers.
+- [ ] Lenient JSON: `_parse_json_rows` accepts missing commas and garbage after
+      the object; consider a strict mode or count malformed lines.
+- [ ] Per-process graph cache (`graph_cache`): it is not shared with
+      `--workers N`; documented, revisit if it scales.
+- [ ] No CSRF token (mitigated by the CORS allowlist + `SameSite=lax` + httpOnly).
 
 ### Testing
 
-- [x] `backend/tests/` pasa a **107 tests** (regresiones de los 4 bugs + los
-      nuevos eventos); `ruff` limpio. Frontend: `lint` (0 errores) + `build` OK.
+- [x] `backend/tests/` becomes **107 tests** (regressions for the 4 bugs + the new
+      events); `ruff` clean. Frontend: `lint` (0 errors) + `build` OK.
 
 ---
 
-## Pendiente / ideas siguientes (fuera del punto 3)
+## Review improvements (all implemented)
 
-- [x] **Timeline / vista cronológica** con reproducción de la secuencia de
-      eventos — hecho (sección homónima de arriba).
-- [x] **Revisión de código / correcciones** — 4 bugs corregidos (sección
-      homónima de arriba).
-- [ ] **Mapeo MITRE ATT&CK** por evento (táctica/técnica) y filtro por técnica.
-- [ ] **Detección de patrones sospechosos** (LOLBins, inyección, persistencia) y
-      risk score — plan detallado en la sección homónima de arriba.
-- [ ] **Pivoting**: expandir padres/hijos, aislar subárbol, ruta más corta entre
-      dos nodos.
-- [ ] **Dashboard de estadísticas** (top procesos, hosts/usuarios, tipos de evento).
-- [ ] **Búsqueda con operadores** (`type:process host:foo`) y guardar vistas.
-- [ ] **Exportar** grafo a PNG/SVG/JSON y lista filtrada a CSV.
-- [ ] **Nuevos vendors**: Sysmon, SentinelOne, Carbon Black, auditd.
-- [ ] **Tests de frontend** (Vitest + Testing Library) y E2E (Playwright).
-- [x] **Fuzzing de parsers** (Hypothesis) — hecho (sección homónima de arriba).
-- [ ] **`/api/health`** y métricas básicas.
-- [ ] **Audit log** de acciones (login, upload, delete).
-- [ ] (Opcional) **Rate limiting** en login y cabeceras de seguridad.
-- [ ] (Roadmap) **Multi-usuario** con datasets por usuario o compartidos.
+- [x] **Enforce the initial graph element cap even for dense process backbones**:
+      account for process-process edges before admitting each process; test
+      parallel edges and verify pagination recovers them all.
+      `backend/app/routers/graph.py`, `backend/tests/test_graph_truncation.py`.
+- [x] **Protect saved layouts under time filters**: filtered graphs cannot save
+      or reset the unfiltered dataset layout. `frontend/src/components/GraphView.jsx`.
+- [x] **Ignore stale graph requests**: generation guards discard late graph,
+      search, omitted-element page and cluster responses; cancel pending layout
+      save timers when switching datasets or time windows.
+      `frontend/src/components/GraphView.jsx`.
+- [x] **Make uploads atomic**: flush batches within one transaction, commit only
+      on success, and roll back any exception; test failure after the first
+      batch. `backend/app/routers/datasets.py`, `backend/tests/test_api.py`.
+- [x] **Scope graph search to the active time window**: propagate `from`/`to`
+      through the API client and search endpoint; test the same node in two
+      windows with evidence matching only one.
+      `backend/app/routers/graph.py`, `frontend/src/api/client.js`,
+      `backend/tests/test_graph_time.py`.
+- [x] **Precompute paginated edges**: bucket omitted edges by the later endpoint
+      so each page avoids rescanning the entire omitted graph.
+      `backend/app/routers/graph.py`.
+- [x] **Improve timeline substring-search performance**: add a PostgreSQL
+      `pg_trgm` GIN expression index and a composite dataset/time/id index;
+      document a representative `EXPLAIN (ANALYZE, BUFFERS)` comparison in
+      `README.md`. Actual PostgreSQL timings remain environment-dependent.
+      `backend/alembic/versions/0006_timeline_search_indexes.py`.
+- [x] **Use English throughout the graph pagination UI**: labels, tooltips and
+      comments now say "Showing", "Load more" and "Load all".
+      `frontend/src/components/GraphView.jsx`.
 
 ---
 
-## Cómo ejecutar lo añadido
+## Pending / next ideas (outside item 3)
+
+- [x] **Timeline / chronological view** with playback of the event sequence —
+      done (eponymous section above).
+- [x] **Code review / corrections** — 4 bugs fixed (eponymous section above).
+- [ ] **MITRE ATT&CK mapping** per event (tactic/technique) and filter by
+      technique.
+- [ ] **Suspicious-pattern detection** (LOLBins, injection, persistence) and
+      risk score — detailed plan in the eponymous section above.
+- [ ] **Pivoting**: expand parents/children, isolate a subtree, shortest path
+      between two nodes.
+- [ ] **Statistics dashboard** (top processes, hosts/users, event types).
+- [ ] **Search with operators** (`type:process host:foo`) and save views.
+- [ ] **Export** the graph to PNG/SVG/JSON and the filtered list to CSV.
+- [ ] **New vendors**: Sysmon, SentinelOne, Carbon Black, auditd.
+- [ ] **Frontend tests** (Vitest + Testing Library) and E2E (Playwright).
+- [x] **Parser fuzzing** (Hypothesis) — done (eponymous section above).
+- [ ] **`/api/health`** and basic metrics.
+- [ ] **Audit log** of actions (login, upload, delete).
+- [ ] (Optional) **Rate limiting** on login and security headers.
+- [ ] (Roadmap) **Multi-user** with per-user or shared datasets.
+
+---
+
+## How to run what was added
 
 ```bash
-# Backend (Docker; pytest no está en la imagen de runtime)
-docker run --rm -v "<ruta>/backend:/app" -w /app \
+# Backend (Docker; pytest is not in the runtime image)
+docker run --rm -v "<path>/backend:/app" -w /app \
   -e DATABASE_URL=sqlite:// -e SECRET_KEY=test-secret-key edr-analyzer-backend \
   sh -c "pip install -q -r requirements-dev.txt && ruff check . && python -m pytest -q"
 
@@ -608,5 +658,5 @@ docker run --rm -v "<ruta>/backend:/app" -w /app \
 cd frontend && npm run lint && npm run build
 ```
 
-`CLUSTER_MIN_CHILDREN` (por defecto `50`; `0` desactiva) controla cuántos
-descendientes exclusivos hacen falta para colapsar un hub.
+`CLUSTER_MIN_CHILDREN` (default `50`; `0` disables) controls how many exclusive
+descendants are needed to collapse a hub.

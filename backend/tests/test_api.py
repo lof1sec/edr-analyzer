@@ -5,6 +5,10 @@ engine) live in ``conftest.py``.
 """
 import io
 
+import pytest
+
+from app.routers import datasets as datasets_router
+
 
 def _upload(client, content, name, content_type="text/csv"):
     return client.post(
@@ -67,6 +71,24 @@ def test_upload_rejects_malformed_json_with_400(admin_client):
 def test_upload_rejects_unsupported_extension_with_400(admin_client):
     resp = _upload(admin_client, b"nope", "events.txt", "text/plain")
     assert resp.status_code == 400
+
+
+def test_upload_rolls_back_all_batches_on_unexpected_error(admin_client, monkeypatch):
+    original_flush = datasets_router._flush_batch
+    calls = 0
+
+    def fail_on_second_batch(db, batch):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("unexpected parser failure")
+        original_flush(db, batch)
+
+    monkeypatch.setattr(datasets_router, "_flush_batch", fail_on_second_batch)
+    data = b"ActionType,DeviceName\n" + b"ProcessCreated,H1\n" * 1001
+    with pytest.raises(RuntimeError, match="unexpected parser failure"):
+        _upload(admin_client, data, "interrupted.csv")
+    assert admin_client.get("/api/datasets/").json() == []
 
 
 def _upload_defender_rows(client, rows, name="events.csv"):

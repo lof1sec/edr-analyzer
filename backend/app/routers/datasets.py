@@ -245,7 +245,6 @@ def _parse_json_rows(file_obj, encoding):
 def _flush_batch(db: Session, batch: list) -> None:
     if batch:
         db.bulk_save_objects(batch)
-        db.commit()
         batch.clear()
 
 
@@ -268,8 +267,7 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
     dataset = Dataset(name=file.filename)
     db.add(dataset)
-    db.commit()
-    db.refresh(dataset)
+    db.flush()
 
     row_iterator = (
         _parse_csv_rows(file.file, encoding)
@@ -294,14 +292,11 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
         if total_events == 0:
             raise HTTPException(status_code=400, detail="No valid log events found in file")
-    except HTTPException:
-        # Don't leave an empty/partial dataset behind on a failed parse.
-        db.rollback()
-        db.query(LogEvent).filter(LogEvent.dataset_id == dataset.id).delete(
-            synchronize_session=False
-        )
-        db.delete(dataset)
+        # Keep all batches in one transaction: a late parser/database failure
+        # rolls back the dataset and every inserted event together.
         db.commit()
+    except Exception:
+        db.rollback()
         raise
 
     # A freshly uploaded dataset has no cached graph, but an id could be reused

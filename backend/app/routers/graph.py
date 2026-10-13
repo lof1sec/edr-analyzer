@@ -2,7 +2,7 @@ import os
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import String, cast, func
+from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -78,11 +78,26 @@ def _truncate_elements(nodes, edges, cap):
     process_order = sorted(process_ids, key=lambda pid: (-degree.get(pid, 0), pid))
 
     process_budget = max(cap // 2, 1)
-    selected_process = set(process_order[:process_budget])
-    selected_edge_ids = {
-        e["data"]["id"] for e in pp_edges
-        if e["data"]["source"] in selected_process and e["data"]["target"] in selected_process
-    }
+    selected_process = set()
+    selected_edge_ids = set()
+    # Count parallel process edges before admitting a node: otherwise a dense
+    # process backbone can exceed the *total* element budget by itself.
+    process_edges = {pid: [] for pid in process_ids}
+    for edge in pp_edges:
+        process_edges[edge["data"]["source"]].append(edge)
+        if edge["data"]["target"] != edge["data"]["source"]:
+            process_edges[edge["data"]["target"]].append(edge)
+    for pid in process_order:
+        if len(selected_process) >= process_budget:
+            break
+        new_edges = {
+            edge["data"]["id"] for edge in process_edges[pid]
+            if edge["data"]["source"] in (selected_process | {pid})
+            and edge["data"]["target"] in (selected_process | {pid})
+        } - selected_edge_ids
+        if len(selected_process) + len(selected_edge_ids) + 1 + len(new_edges) <= cap:
+            selected_process.add(pid)
+            selected_edge_ids.update(new_edges)
 
     # Map each artifact to its incident process<->artifact edges once, so filling
     # the budget is O(pa_edges) instead of O(artifacts * pa_edges).
@@ -149,8 +164,27 @@ def _truncated_parts(payload: dict, cap: int):
         "edges": edges,
         "omitted_nodes": omitted_nodes,
         "omitted_edges": omitted_edges,
+        # Bucket each edge by the later page of its endpoints. A page can now
+        # return its edges without scanning every omitted node/edge again.
+        "edge_buckets": _edge_buckets(nodes, omitted_nodes, omitted_edges),
     }
     return nodes, edges, omitted_nodes, omitted_edges
+
+
+def _edge_buckets(initial_nodes, omitted_nodes, omitted_edges):
+    initial_ids = {node["data"]["id"] for node in initial_nodes}
+    position = {node["data"]["id"]: index for index, node in enumerate(omitted_nodes)}
+    buckets = {}
+    for edge in omitted_edges:
+        source, target = edge["data"]["source"], edge["data"]["target"]
+        if source not in initial_ids and source not in position:
+            continue
+        if target not in initial_ids and target not in position:
+            continue
+        later = max(position.get(source, -1), position.get(target, -1))
+        if later >= 0:
+            buckets.setdefault(later, []).append(edge)
+    return buckets
 
 
 def _build_graph_payload(
@@ -182,6 +216,7 @@ def _build_graph_payload(
     # once, keeping peak memory bounded for large datasets.
     logs = query.order_by(LogEvent.id).yield_per(1000)
     builder = GraphBuilder()
+    event_times = {}
 
     for log in logs:
         event = log.data
@@ -189,6 +224,7 @@ def _build_graph_payload(
         # Stamp this event's normalized time so elements record when they were
         # first/last observed (the details pane shows it).
         builder.current_event_time = log.event_time
+        builder.current_event_id = log.id
 
         # Vendor is detected per event, so a dataset can safely mix exports.
         vendor = get_vendor(event)
@@ -207,12 +243,16 @@ def _build_graph_payload(
                 ctx["username"],
                 ctx["hostname"],
             )
+            if log.id in builder.event_elements:
+                event_times[log.id] = (log.event_time, evt_type)
         else:
             # Neither vendor marker is present. Report it as unmapped instead of
             # force-feeding it to the Defender parser.
             builder.unmapped_events.append(evt_type)
 
-    return builder.build_cytoscape_elements()
+    payload = builder.build_cytoscape_elements()
+    payload["event_times"] = event_times
+    return payload
 
 
 def _get_graph_payload(
@@ -296,7 +336,7 @@ def get_elements(
     never receives a dangling edge.
     """
     payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
-    _, _, omitted_nodes, omitted_edges = _truncated_parts(
+    _, _, omitted_nodes, _ = _truncated_parts(
         payload, _max_initial_elements()
     )
 
@@ -306,18 +346,8 @@ def get_elements(
     end = min(offset + limit, len(omitted_nodes))
     nodes_page = omitted_nodes[offset:end]
 
-    initial_ids = {
-        n["data"]["id"] for n in payload["elements"]["nodes"]
-    } - {n["data"]["id"] for n in omitted_nodes}
-    loaded_ids = initial_ids | {n["data"]["id"] for n in omitted_nodes[:end]}
-    page_ids = {n["data"]["id"] for n in nodes_page}
-
-    edges_page = [
-        e for e in omitted_edges
-        if e["data"]["source"] in loaded_ids
-        and e["data"]["target"] in loaded_ids
-        and (e["data"]["source"] in page_ids or e["data"]["target"] in page_ids)
-    ]
+    buckets = payload["_truncation"]["edge_buckets"]
+    edges_page = [edge for index in range(offset, end) for edge in buckets.get(index, ())]
 
     return {
         "nodes": nodes_page,
@@ -341,10 +371,58 @@ def get_element_logs(
     return {"element_id": element_id, "raw_logs": logs, "returned": len(logs)}
 
 
+@router.get("/{dataset_id}/focus")
+def get_focus_elements(
+    dataset_id: int,
+    element_id: str = Query(...),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
+    db: Session = Depends(get_db),
+):
+    """Load a timeline target and its endpoints, even if paged or clustered."""
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
+    nodes = {node["data"]["id"]: node for node in payload["elements"]["nodes"]}
+    edges = {edge["data"]["id"]: edge for edge in payload["elements"]["edges"]}
+    cluster_id = None
+    for candidate, cluster in payload["clusters"].items():
+        if element_id in {item["data"]["id"] for item in cluster["nodes"] + cluster["edges"]}:
+            cluster_id = candidate
+            break
+    if cluster_id:
+        cluster = payload["clusters"][cluster_id]
+        hub = nodes.get(cluster["node"]["parentId"])
+        return {
+            "nodes": ([hub] if hub else []) + cluster["nodes"],
+            "edges": cluster["edges"],
+            "cluster_id": cluster_id,
+            "cluster_node": {"data": cluster["node"]},
+            "cluster_edge": {"data": cluster["edge"]},
+        }
+    if element_id in edges:
+        edge = edges[element_id]
+        endpoints = [nodes[node_id] for node_id in
+                     (edge["data"]["source"], edge["data"]["target"]) if node_id in nodes]
+        return {"nodes": endpoints, "edges": [edge], "cluster_id": None}
+    if element_id in nodes:
+        node = nodes[element_id]
+        # Bring in one real relationship so an artifact is not orphaned when
+        # Cytoscape's filter effect runs after loading.
+        incident = next((edge for edge in edges.values()
+                         if element_id in (edge["data"]["source"], edge["data"]["target"])), None)
+        if incident:
+            other = incident["data"]["target"] if incident["data"]["source"] == element_id else incident["data"]["source"]
+            return {"nodes": [node] + ([nodes[other]] if other in nodes else []),
+                    "edges": [incident], "cluster_id": None}
+        return {"nodes": [node], "edges": [], "cluster_id": None}
+    raise HTTPException(status_code=404, detail="Element not found")
+
+
 @router.get("/{dataset_id}/search")
 def search_graph(
     dataset_id: int,
     q: str = Query("", description="Comma-separated search terms"),
+    from_ms: int | None = Query(None, alias="from"),
+    to_ms: int | None = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
     """Return the ids of elements matching the (lowercased) search terms.
@@ -357,7 +435,7 @@ def search_graph(
     if not terms:
         return {"ids": []}
 
-    payload = _get_graph_payload(dataset_id, db)
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
     index = payload.get("search_index", {})
     ids = [element_id for element_id, text in index.items() if any(term in text for term in terms)]
     return {"ids": ids}
@@ -385,23 +463,90 @@ def _summarize(event_type: str, ctx: dict) -> str:
     return target or actor or event_type
 
 
-def _timeline_element_ids(ctx: dict) -> list[str]:
-    """Best-effort graph element ids to highlight for an event.
+def _timeline_view(payload, hidden_event_types, hidden_users, hidden_pids, graph_q):
+    """Resolve graph-derived event visibility before counting or paginating.
 
-    Process node ids are host-scoped (``pid@host``; see
-    ``GraphBuilder.process_node_id``), so each actor/target PID is combined
-    with the event's host to match the builder. Artifacts keep their own id
-    scheme and are not mapped.
+    Clusters and truncated elements still contribute: those are presentation
+    choices, not event filters. Results are memoised on the graph's window-scoped
+    cache entry; no raw events are copied into the response.
     """
-    host = ctx.get("hostname")
-    host_text = "" if host in (None, "") else str(host).strip()
-    ids = []
-    for key in ("actor_id", "target_id"):
-        value = ctx.get(key)
-        if value not in (None, ""):
-            pid = str(value)
-            ids.append(f"{pid}@{host_text}" if host_text else pid)
-    return list(dict.fromkeys(ids))
+    key = (tuple(sorted(hidden_event_types)), tuple(sorted(hidden_users)),
+           tuple(sorted(hidden_pids)), graph_q.strip().lower())
+    views = payload.setdefault("_timeline_views", {})
+    if key in views:
+        return views[key]
+
+    nodes = {node["data"]["id"]: node["data"] for node in payload["elements"]["nodes"]}
+    edges = {edge["data"]["id"]: edge["data"] for edge in payload["elements"]["edges"]}
+    cluster_for = {}
+    for cluster_id, cluster in payload["clusters"].items():
+        for node in cluster["nodes"]:
+            nodes[node["data"]["id"]] = node["data"]
+            cluster_for[node["data"]["id"]] = cluster_id
+        for edge in cluster["edges"]:
+            edges[edge["data"]["id"]] = edge["data"]
+            cluster_for[edge["data"]["id"]] = cluster_id
+
+    terms = [term.strip() for term in graph_q.lower().split(",") if term.strip()]
+    matches = (
+        {element_id for element_id, text in payload["search_index"].items()
+         if any(term in text for term in terms)} if terms else None
+    )
+    allowed_nodes = {
+        node_id for node_id, data in nodes.items()
+        if (data.get("group") != "process" or
+            (str(data.get("username")) not in hidden_users and node_id not in hidden_pids))
+    }
+    visible_nodes = allowed_nodes if matches is None else allowed_nodes & matches
+    # As in GraphView, an edge matching global search reveals its endpoints
+    # unless an identity filter suppresses them.
+    if matches is not None:
+        for edge_id in matches & edges.keys():
+            edge = edges[edge_id]
+            visible_nodes.update({edge["source"], edge["target"]} & allowed_nodes)
+    visible_edges = {
+        edge_id for edge_id, data in edges.items()
+        if data.get("event_simplename") not in hidden_event_types
+        and data["source"] in visible_nodes and data["target"] in visible_nodes
+    }
+    visible_artifacts = {
+        node_id for edge_id in visible_edges
+        for node_id in (edges[edge_id]["source"], edges[edge_id]["target"])
+        if nodes.get(node_id, {}).get("group") != "process"
+    }
+    visible_nodes = {
+        node_id for node_id in visible_nodes
+        if nodes.get(node_id, {}).get("group") == "process" or node_id in visible_artifacts
+    }
+
+    result = {}
+    for event_id, refs in payload["event_elements"].items():
+        time_and_type = payload["event_times"].get(event_id)
+        if not time_and_type or time_and_type[1] in hidden_event_types:
+            continue
+        event_edges = refs["edges"] & visible_edges
+        event_nodes = refs["nodes"] & visible_nodes
+        # A hidden relationship cannot be kept alive by its shared actor node.
+        if not event_edges and (refs["edges"] or not event_nodes):
+            continue
+        ids = sorted(event_nodes) + sorted(event_edges)
+        focus_id = sorted(event_edges)[0] if event_edges else ids[0]
+        result[event_id] = {
+            "element_ids": ids,
+            "focus_element_id": focus_id,
+            "focus_cluster_id": cluster_for.get(focus_id),
+        }
+
+    ordered = sorted(result, key=lambda event_id: (
+        payload["event_times"][event_id][0] is None,
+        payload["event_times"][event_id][0] or 0,
+        event_id,
+    ))
+    # Keep only a few filter combinations per cached graph.
+    if len(views) >= 8:
+        views.pop(next(iter(views)))
+    views[key] = (ordered, result)
+    return ordered, result
 
 
 @router.get("/{dataset_id}/timeline")
@@ -413,6 +558,10 @@ def get_timeline(
     q: str | None = Query(None),
     from_ms: int | None = Query(None, alias="from"),
     to_ms: int | None = Query(None, alias="to"),
+    graph_q: str = Query(""),
+    hidden_event_type: list[str] | None = Query(None),
+    hidden_user: list[str] | None = Query(None),
+    hidden_pid: list[str] | None = Query(None),
     db: Session = Depends(get_db),
 ):
     """Return a dataset's events in chronological order, paginated.
@@ -421,32 +570,35 @@ def get_timeline(
     usable timestamp sort last, in insertion order. Only compact summaries are
     returned (raw logs stay server-side, per the payload invariant).
     """
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    query = db.query(LogEvent).filter(LogEvent.dataset_id == dataset_id)
-    if event_type:
-        query = query.filter(LogEvent.event_type == event_type)
-    if from_ms is not None:
-        query = query.filter(LogEvent.event_time >= from_ms)
-    if to_ms is not None:
-        query = query.filter(LogEvent.event_time <= to_ms)
-    if q:
-        query = query.filter(cast(LogEvent.data, String).ilike(f"%{q}%"))
-
-    total = query.count()
-    # ``event_time IS NULL`` is False (0) for dated events, so ordering by it
-    # ascending puts dated events first; undated ones keep insertion order last.
-    ordered = query.order_by(
-        LogEvent.event_time.is_(None),
-        LogEvent.event_time.asc(),
-        LogEvent.id.asc(),
+    payload = _get_graph_payload(dataset_id, db, from_ms, to_ms)
+    ordered, references = _timeline_view(
+        payload, set(hidden_event_type or ()), set(hidden_user or ()),
+        set(hidden_pid or ()), graph_q,
     )
-    rows = ordered.offset(offset).limit(limit).all()
+    if event_type:
+        ordered = [event_id for event_id in ordered
+                   if payload["event_times"][event_id][1] == event_type]
+    if q:
+        # PostgreSQL's trigram index on this exact expression accelerates
+        # substring searches; SQLite keeps the same behaviour in tests.
+        search_query = db.query(LogEvent.id).filter(LogEvent.dataset_id == dataset_id)
+        if from_ms is not None:
+            search_query = search_query.filter(LogEvent.event_time >= from_ms)
+        if to_ms is not None:
+            search_query = search_query.filter(LogEvent.event_time <= to_ms)
+        matching = {
+            row.id for row in search_query.filter(cast(LogEvent.data, Text).ilike(f"%{q}%"))
+        }
+        ordered = [event_id for event_id in ordered if event_id in matching]
+
+    total = len(ordered)
+    page_ids = ordered[offset:offset + limit]
+    rows = db.query(LogEvent).filter(LogEvent.id.in_(page_ids)).all() if page_ids else []
+    by_id = {row.id: row for row in rows}
 
     entries = []
-    for index, log in enumerate(rows, start=offset):
+    for index, event_id in enumerate(page_ids, start=offset):
+        log = by_id[event_id]
         event = log.data if isinstance(log.data, dict) else {}
         vendor = get_vendor(event)
         ctx = describe_event(event, vendor)
@@ -460,7 +612,9 @@ def get_timeline(
             "summary": _summarize(log.event_type, ctx),
             "actor_id": ctx.get("actor_id"),
             "target_id": ctx.get("target_id"),
-            "element_ids": _timeline_element_ids(ctx),
+            "element_ids": references[event_id]["element_ids"],
+            "focus_element_id": references[event_id]["focus_element_id"],
+            "focus_cluster_id": references[event_id]["focus_cluster_id"],
         })
 
     return {"total": total, "offset": offset, "limit": limit, "entries": entries}

@@ -95,8 +95,11 @@ export const api = {
   getElementLogs: (id, elementId, { from = null, to = null } = {}) =>
     request(buildQuery(`/api/graph/${id}/element-logs`, { element_id: elementId, from, to })),
 
-  searchGraph: (id, query) =>
-    request(`/api/graph/${id}/search?q=${encodeURIComponent(query)}`),
+  getFocusElements: (id, elementId, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/focus`, { element_id: elementId, from, to })),
+
+  searchGraph: (id, query, { from = null, to = null } = {}) =>
+    request(buildQuery(`/api/graph/${id}/search`, { q: query, from, to })),
 
   getCluster: (id, clusterId, { from = null, to = null } = {}) =>
     request(buildQuery(`/api/graph/${id}/clusters/${encodeURIComponent(clusterId)}`, { from, to })),
@@ -113,12 +116,19 @@ export const api = {
       body: JSON.stringify({ positions }),
     }),
 
-  getTimeline: (id, { offset = 0, limit = 200, eventType = '', q = '' } = {}) => {
+  getTimeline: (id, { offset = 0, limit = 200, eventType = '', q = '',
+    from = null, to = null, graphQ = '', hiddenEventTypes = [], hiddenUsers = [], hiddenPids = [] } = {}) => {
     const params = new URLSearchParams();
     params.set('offset', String(offset));
     params.set('limit', String(limit));
     if (eventType) params.set('event_type', eventType);
     if (q) params.set('q', q);
+    if (from != null) params.set('from', String(from));
+    if (to != null) params.set('to', String(to));
+    if (graphQ) params.set('graph_q', graphQ);
+    hiddenEventTypes.forEach(type => params.append('hidden_event_type', type));
+    hiddenUsers.forEach(user => params.append('hidden_user', user));
+    hiddenPids.forEach(pid => params.append('hidden_pid', pid));
     return request(`/api/graph/${id}/timeline?${params.toString()}`);
   },
 };

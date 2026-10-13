@@ -158,6 +158,10 @@ class GraphBuilder:
         self.nodes_dict = {}
         self.edges_list = []
         self.unmapped_events = []
+        # Server-side event -> graph element references; never part of Cytoscape
+        # element data. Set current_event_id while parsing each stored log row.
+        self.event_elements = {}
+        self.current_event_id = None
         self._edge_seq = 0
         # Normalized event time (epoch ms) of the event currently being parsed;
         # set by the graph builder per event and read by ``_append_raw_log`` to
@@ -180,6 +184,13 @@ class GraphBuilder:
         host = as_text(hostname).strip()
         return f"{pid_text}@{host}" if host else pid_text
 
+    def _record_event_element(self, element_id, kind):
+        if self.current_event_id is not None:
+            refs = self.event_elements.setdefault(
+                self.current_event_id, {"nodes": set(), "edges": set()}
+            )
+            refs[kind].add(element_id)
+
     def get_or_create_process_node(self, pid, name=None, username=None, hostname=None, evt_type=None, raw_event=None):
         # Returns the resolved node id so callers reuse it for their edges and
         # for artifact ids that embed the owning process (host-scoped).
@@ -189,6 +200,7 @@ class GraphBuilder:
         pid = self.process_node_id(pid, hostname)
         if not pid:
             return None
+        self._record_event_element(pid, "nodes")
 
         display_name = name if name else "Unknown"
         label = f"{display_name}\n{pid_text}" if name else f"Process ID:\n{pid_text}"
@@ -282,6 +294,7 @@ class GraphBuilder:
         if not node_id:
             return
         node_id = str(node_id)
+        self._record_event_element(node_id, "nodes")
 
         if node_id not in self.nodes_dict:
             self.nodes_dict[node_id] = {
@@ -323,6 +336,7 @@ class GraphBuilder:
         }
         _append_raw_log(edge, raw_event, self.current_event_time)
         self.edges_list.append(edge)
+        self._record_event_element(edge["id"], "edges")
 
     def _plan_clusters(self):
         """Collapse a process hub's exclusively-owned *artifact* children.
@@ -479,4 +493,5 @@ class GraphBuilder:
             "search_index": search_index,
             "unmapped_events": self.unmapped_events,
             "clusters": clusters,
+            "event_elements": self.event_elements,
         }

@@ -98,5 +98,35 @@ export const stylesheet = () => [
     style: {
       'width': 4
     }
+  },
+  {
+    // Playback may temporarily reveal an endpoint hidden by a presentation
+    // filter; the hidden class itself is left untouched.
+    selector: '.playback-context',
+    style: {
+      'display': 'element',
+      'opacity': 1,
+    }
+  },
+  {
+    selector: 'node.playback-active',
+    style: {
+      'display': 'element',
+      'opacity': 1,
+      'border-width': 5,
+      'border-color': '#38bdf8',
+      'z-index': 999,
+    }
+  },
+  {
+    selector: 'edge.playback-active',
+    style: {
+      'display': 'element',
+      'opacity': 1,
+      'width': 6,
+      'line-color': '#38bdf8',
+      'target-arrow-color': '#38bdf8',
+      'z-index': 999,
+    }
   }
 ];

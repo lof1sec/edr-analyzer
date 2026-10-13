@@ -64,6 +64,24 @@ def test_graph_time_filter_keeps_only_events_in_window(admin_client):
     assert _node_ids(exact) == {"600@H1", "file1.dll"}
 
 
+def test_search_only_matches_events_in_the_active_window(admin_client):
+    # Same node in both windows, but a raw field matches only the later event.
+    header = _HEADER.replace(b"FileName\n", b"FileName,Extra\n")
+    rows = (
+        b"FileCreated,H1,2026-10-05T12:00:00Z,600,,svchost.exe,shared.dll,ordinary\n"
+        b"FileCreated,H1,2026-10-05T12:10:00Z,600,,svchost.exe,shared.dll,needle\n"
+    )
+    dataset_id = _upload(admin_client, header + rows).json()["dataset_id"]
+    before = {"to": _ms("2026-10-05T12:00:00+00:00"), "q": "needle"}
+    after = {"from": _ms("2026-10-05T12:10:00+00:00"), "q": "needle"}
+    assert "shared.dll" not in admin_client.get(
+        f"/api/graph/{dataset_id}/search", params=before
+    ).json()["ids"]
+    assert "shared.dll" in admin_client.get(
+        f"/api/graph/{dataset_id}/search", params=after
+    ).json()["ids"]
+
+
 def test_time_range_endpoint_reports_full_span(admin_client):
     dataset_id = _upload(admin_client, _HEADER + _ROWS).json()["dataset_id"]
 
@@ -128,4 +146,3 @@ def test_undated_elements_have_no_time(admin_client):
     nodes = {n["data"]["id"]: n["data"] for n in graph["elements"]["nodes"]}
     assert "first_time" not in nodes["600@H1"]
     assert "first_time" not in nodes["undated.dll"]
-
