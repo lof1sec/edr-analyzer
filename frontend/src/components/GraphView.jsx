@@ -57,6 +57,14 @@ function formatDateTime(ms) {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+function mergeGraphElements(existing, incoming) {
+  const byId = new Map(existing.map(element => [element.data.id, element]));
+  incoming.forEach(element => {
+    if (!byId.has(element.data.id)) byId.set(element.data.id, element);
+  });
+  return Array.from(byId.values());
+}
+
 function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0) {
   const large = elementCount > LARGE_GRAPH_THRESHOLD;
   switch (mode) {
@@ -129,7 +137,24 @@ function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0)
   }
 }
 
-export default function GraphView({ datasetId, focusElementId, onFocusConsumed }) {
+export default function GraphView({ datasetId, graphFilters, setGraphFilters, playbackEntry, onPlaybackReady, onPlaybackError }) {
+  const playbackElementId = playbackEntry?.focus_element_id;
+  const rangeFrom = graphFilters.rangeFrom;
+  const rangeTo = graphFilters.rangeTo;
+  const globalSearch = graphFilters.globalSearch;
+  const eventTypes = graphFilters.eventTypes;
+  const users = graphFilters.users;
+  const pids = graphFilters.pids;
+  const setFilter = useCallback((key, update) => setGraphFilters(prev => ({
+    ...prev,
+    [key]: typeof update === 'function' ? update(prev[key]) : update,
+  })), [setGraphFilters]);
+  const setRangeFrom = (value) => setFilter('rangeFrom', value);
+  const setRangeTo = (value) => setFilter('rangeTo', value);
+  const setGlobalSearch = (value) => setFilter('globalSearch', value);
+  const setEventTypes = useCallback((value) => setFilter('eventTypes', value), [setFilter]);
+  const setUsers = useCallback((value) => setFilter('users', value), [setFilter]);
+  const setPids = useCallback((value) => setFilter('pids', value), [setFilter]);
   const [elements, setElements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -156,27 +181,23 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   // Time-range filter: `rangeFrom`/`rangeTo` are the *applied* bounds (epoch ms)
   // that drive the graph; `fromInput`/`toInput` are the picker values edited by
   // the user. `availableRange` is the dataset's full span, shown as a hint.
-  const [rangeFrom, setRangeFrom] = useState(null);
-  const [rangeTo, setRangeTo] = useState(null);
-  const [fromInput, setFromInput] = useState('');
-  const [toInput, setToInput] = useState('');
+  const [fromInput, setFromInput] = useState(() => msToLocalInput(rangeFrom));
+  const [toInput, setToInput] = useState(() => msToLocalInput(rangeTo));
   const [availableRange, setAvailableRange] = useState({ min: null, max: null });
-  const timeRangeRef = useRef({ from: null, to: null });
-  const rangeDatasetRef = useRef(datasetId);
   const cyRef = useRef(null);
   const initialPositions = useRef({});
   const isRightPaneOpenRef = useRef(true);
   const layoutModeRef = useRef(layoutMode);
   const rawLogsCache = useRef(new Map());
-  const datasetIdRef = useRef(datasetId);
   const saveTimer = useRef(null);
   const expandClusterRef = useRef(null);
+  const graphGeneration = useRef(0);
+  const graphReady = useRef(false);
+  const graphContext = useRef(null);
+  const focusLoadingRef = useRef(null);
+  const activeFocusRef = useRef(null);
 
   // Filters state
-  const [globalSearch, setGlobalSearch] = useState('');
-  const [eventTypes, setEventTypes] = useState({});
-  const [users, setUsers] = useState({});
-  const [pids, setPids] = useState({});
   const debouncedGlobalSearch = useDebouncedValue(globalSearch, 250);
 
   // Local Filter Searches
@@ -195,13 +216,11 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
 
   // Server-side search result. Stored with the query it belongs to so a stale
   // result is ignored instead of flashing the wrong matches.
-  const [searchResult, setSearchResult] = useState({ q: '', ids: null });
+  const [searchResult, setSearchResult] = useState({ q: '', key: '', ids: null });
 
   // Keep refs in sync so long-lived cytoscape listeners read fresh values.
   useEffect(() => { isRightPaneOpenRef.current = isRightPaneOpen; }, [isRightPaneOpen]);
   useEffect(() => { layoutModeRef.current = layoutMode; }, [layoutMode]);
-  useEffect(() => { datasetIdRef.current = datasetId; }, [datasetId]);
-  useEffect(() => { timeRangeRef.current = { from: rangeFrom, to: rangeTo }; }, [rangeFrom, rangeTo]);
 
   // The dataset's full event-time span (unfiltered) backs the range hint and the
   // pickers' min/max. Fetched once per dataset, in parallel-ish with the graph.
@@ -232,45 +251,90 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     return map;
   }, [elements]);
 
-  // Focus an element requested by another view (e.g. the timeline). Waits until
-  // it is present in the loaded payload, then centres and selects it, and
-  // reports back so the same request is not repeated.
   useEffect(() => {
-    if (!focusElementId || !cyRef.current) return;
-    const element = elementsById.get(focusElementId);
-    if (!element) return;
+    activeFocusRef.current = playbackElementId;
+    if (!playbackElementId || !datasetId || !graphReady.current || loading ||
+        elementsById.has(playbackElementId) ||
+        (focusLoadingRef.current?.id === playbackElementId &&
+          focusLoadingRef.current?.generation === graphGeneration.current)) return;
+    const generation = graphGeneration.current;
+    const request = { id: playbackElementId, generation };
+    focusLoadingRef.current = request;
+    api.getFocusElements(datasetId, playbackElementId, graphContext.current)
+      .then(res => {
+        if (generation !== graphGeneration.current || activeFocusRef.current !== playbackElementId) return;
+        const center = cyRef.current?.extent();
+        const origin = center
+          ? { x: (center.x1 + center.x2) / 2, y: (center.y1 + center.y2) / 2 }
+          : { x: 0, y: 0 };
+        const positioned = (res.nodes || []).map((node, index) => ({
+          ...node,
+          position: { x: origin.x + 90 * Math.cos(index), y: origin.y + 90 * Math.sin(index) },
+        }));
+        setElements(previous => mergeGraphElements(
+          previous.filter(el => el.data.id !== res.cluster_id &&
+            el.data.id !== res.cluster_edge?.data.id),
+          [...positioned, ...(res.edges || [])]
+        ));
+        if (res.cluster_id) {
+          setExpandedClusters(previous => ({
+            ...previous,
+            [res.cluster_id]: {
+              node: res.cluster_node,
+              edge: res.cluster_edge,
+              memberIds: (res.nodes || []).filter(node => node.data.id !== res.cluster_node.data.parentId)
+                .map(node => node.data.id),
+              memberEdgeIds: (res.edges || []).map(edge => edge.data.id),
+            },
+          }));
+        }
+      })
+      .catch(err => {
+        if (generation === graphGeneration.current && activeFocusRef.current === playbackElementId) {
+          console.error('Could not focus timeline event', err);
+          onPlaybackError(err?.message || 'Could not load the event on the graph.');
+        }
+      })
+      .finally(() => { if (focusLoadingRef.current === request) focusLoadingRef.current = null; });
+  }, [datasetId, playbackElementId, playbackEntry?.requestId, elementsById, loading, onPlaybackError]);
+
+  // Highlight the current timeline event without changing selection or layout.
+  // Temporary playback classes reveal hidden endpoints only for this step;
+  // manual filters remain intact when playback moves on or the tab is closed.
+  useEffect(() => {
     const cy = cyRef.current;
-    const target = cy.getElementById(focusElementId);
-    if (target.nonempty()) {
-      cy.animate(
-        { center: { eles: target }, zoom: Math.max(cy.zoom(), 1) },
-        { duration: 300 }
-      );
-    }
-    if (element.data) {
-      setSelectedLogs([]);
-      setSelectedNode(element.data);
-      setIsRightPaneOpen(true);
-      setActiveTab('details');
-    }
-    if (onFocusConsumed) onFocusConsumed();
-  }, [focusElementId, elementsById, onFocusConsumed]);
+    if (!cy) return;
+    cy.batch(() => {
+      cy.elements('.playback-active, .playback-context')
+        .removeClass('playback-active playback-context');
+    });
+    if (!playbackElementId || !elementsById.has(playbackElementId)) return;
+    const target = cy.getElementById(playbackElementId);
+    if (target.empty()) return;
+    cy.batch(() => {
+      target.addClass('playback-active');
+      if (target.isEdge()) {
+        target.source().addClass('playback-context');
+        target.target().addClass('playback-context');
+      }
+    });
+    cy.stop();
+    cy.animate(
+      { center: { eles: target }, zoom: Math.max(cy.zoom(), 1) },
+      { duration: 180 }
+    );
+    onPlaybackReady(playbackEntry.id);
+  }, [playbackElementId, playbackEntry?.id, playbackEntry?.requestId, elementsById, onPlaybackReady]);
 
   useEffect(() => {
     if (!datasetId) return;
+    const generation = ++graphGeneration.current;
+    graphReady.current = false;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
 
-    // Switching datasets starts unfiltered: ignore (and clear) any range applied
-    // to the previous dataset, without skipping this run's fetch.
-    const datasetChanged = rangeDatasetRef.current !== datasetId;
-    if (datasetChanged) {
-      rangeDatasetRef.current = datasetId;
-      setRangeFrom(null);
-      setRangeTo(null);
-      setFromInput('');
-      setToInput('');
-    }
-    const activeFrom = datasetChanged ? null : rangeFrom;
-    const activeTo = datasetChanged ? null : rangeTo;
+    const activeFrom = rangeFrom;
+    const activeTo = rangeTo;
+    graphContext.current = { datasetId, from: activeFrom, to: activeTo };
 
     initialPositions.current = {}; // Reset positions on new dataset/range
     rawLogsCache.current = new Map();
@@ -278,7 +342,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     setSelectedLogs([]);
     setFocusDepth(0);
     setLayoutMode('force');
-    setSearchResult({ q: '', ids: null });
+    setSearchResult({ q: '', key: '', ids: null });
     setExpandedClusters({});
     setError(null);
     const fetchGraph = async () => {
@@ -288,6 +352,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
           api.getGraph(datasetId, { from: activeFrom, to: activeTo }),
           api.getLayout(datasetId).catch(() => null),
         ]);
+        if (graphGeneration.current !== generation) return;
 
         // Restore the saved arrangement (if any) before the layout memo runs.
         // A time filter changes the node set, so the full-graph layout no longer
@@ -312,9 +377,15 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
           }
         });
 
-        setEventTypes(Array.from(uniqueEvents).reduce((acc, evt) => ({ ...acc, [evt]: true }), {}));
-        setUsers(Array.from(uniqueUsers).reduce((acc, usr) => ({ ...acc, [usr]: true }), {}));
-        setPids(Array.from(uniquePids).reduce((acc, pid) => ({ ...acc, [pid]: true }), {}));
+        setEventTypes(previous => ({ ...previous, ...Object.fromEntries(
+          Array.from(uniqueEvents, evt => [evt, previous[evt] !== false])
+        ) }));
+        setUsers(previous => ({ ...previous, ...Object.fromEntries(
+          Array.from(uniqueUsers, usr => [usr, previous[usr] !== false])
+        ) }));
+        setPids(previous => ({ ...previous, ...Object.fromEntries(
+          Array.from(uniquePids, pid => [pid, previous[pid] !== false])
+        ) }));
 
         const cyElements = [
           ...(data.elements.nodes || []),
@@ -328,35 +399,48 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         setTotalElements((data.total_nodes || 0) + (data.total_edges || 0));
         omittedOffsetRef.current = 0;
         setLoadingMore(false);
+        graphReady.current = true;
       } catch (err) {
+        if (graphGeneration.current !== generation) return;
         console.error(err);
         setError(err?.message || 'Failed to load the graph.');
       } finally {
-        setLoading(false);
+        if (graphGeneration.current === generation) setLoading(false);
       }
     };
     fetchGraph();
-  }, [datasetId, reloadKey, rangeFrom, rangeTo]);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (graphGeneration.current === generation) {
+        graphGeneration.current += 1;
+        graphReady.current = false;
+      }
+    };
+  }, [datasetId, reloadKey, rangeFrom, rangeTo, setEventTypes, setUsers, setPids]);
 
   // The backend resolves the global search against its cached search index, so
   // raw events never reach the browser. Storing the query with the result lets
   // us ignore stale responses.
   useEffect(() => {
     const query = debouncedGlobalSearch.trim();
-    if (!datasetId || !query) return;
+    if (!datasetId || !query || !graphReady.current) return;
     let cancelled = false;
-    api.searchGraph(datasetId, query)
+    const generation = graphGeneration.current;
+    api.searchGraph(datasetId, query, { from: rangeFrom, to: rangeTo })
       .then(res => {
-        if (!cancelled) setSearchResult({ q: query, ids: new Set(res.ids || []) });
+        if (!cancelled && graphGeneration.current === generation) {
+          setSearchResult({ q: query, key: JSON.stringify([datasetId, rangeFrom, rangeTo]), ids: new Set(res.ids || []) });
+        }
       })
       .catch(err => {
         console.error(err);
       });
     return () => { cancelled = true; };
-  }, [datasetId, debouncedGlobalSearch]);
+  }, [datasetId, debouncedGlobalSearch, rangeFrom, rangeTo, loading]);
 
   const searchQuery = debouncedGlobalSearch.trim();
-  const matchedIds = searchQuery && searchResult.q === searchQuery ? searchResult.ids : null;
+  const matchedIds = searchQuery && searchResult.q === searchQuery &&
+    searchResult.key === JSON.stringify([datasetId, rangeFrom, rangeTo]) ? searchResult.ids : null;
 
   // Apply filters whenever state changes. Element data holds no raw events, so
   // filtering is a pure, cheap pass over the precomputed search result.
@@ -484,8 +568,10 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     api.getElementLogs(datasetId, elementId, { from: rangeFrom, to: rangeTo })
       .then(res => {
         const logs = res?.raw_logs || [];
-        rawLogsCache.current.set(elementId, logs);
-        if (!cancelled) setSelectedLogs(logs);
+        if (!cancelled) {
+          rawLogsCache.current.set(elementId, logs);
+          setSelectedLogs(logs);
+        }
       })
       .catch(err => {
         console.error(err);
@@ -560,7 +646,10 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   // user's latest arrangement even before the request completes.
   const persistLayout = useCallback(() => {
     const cy = cyRef.current;
-    if (!cy) return;
+    const context = graphContext.current;
+    // Only the unfiltered, fully loaded graph owns the saved dataset layout.
+    if (!cy || !graphReady.current || !context || context.from != null || context.to != null) return;
+    const generation = graphGeneration.current;
     const fresh = {};
     cy.nodes().forEach(node => {
       const pos = node.position();
@@ -572,8 +661,8 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     initialPositions.current = positions;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      if (datasetIdRef.current) {
-        api.saveLayout(datasetIdRef.current, positions).catch(err => {
+      if (graphGeneration.current === generation && graphReady.current) {
+        api.saveLayout(context.datasetId, positions).catch(err => {
           console.error('Failed to save layout', err);
         });
       }
@@ -581,13 +670,17 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   }, []);
 
   const resetLayout = async () => {
+    if (!graphReady.current || hasActiveTimeRange || !graphContext.current) return;
+    const generation = graphGeneration.current;
+    const dataset = graphContext.current.datasetId;
     initialPositions.current = {};
     if (saveTimer.current) clearTimeout(saveTimer.current);
     try {
-      if (datasetIdRef.current) await api.saveLayout(datasetIdRef.current, {});
+      await api.saveLayout(dataset, {});
     } catch (err) {
       console.error('Failed to clear layout', err);
     }
+    if (graphGeneration.current !== generation) return;
     setLayoutMode('force');
     setLayoutKey(k => k + 1);
   };
@@ -610,15 +703,18 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
   // so the memoised layout object stays the same). New nodes are fanned out
   // around the current viewport centre instead of piling up at (0, 0).
   const loadMoreElements = useCallback(async () => {
-    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    if (!graphReady.current || loadingMore || !truncated) return;
+    const generation = graphGeneration.current;
+    const context = graphContext.current;
     setLoadingMore(true);
     try {
-      const res = await api.getGraphElements(datasetIdRef.current, {
+      const res = await api.getGraphElements(context.datasetId, {
         offset: omittedOffsetRef.current,
         limit: 500,
-        from: timeRangeRef.current.from,
-        to: timeRangeRef.current.to,
+        from: context.from,
+        to: context.to,
       });
+      if (graphGeneration.current !== generation) return;
       const cy = cyRef.current;
       let center = { x: 0, y: 0 };
       if (cy) {
@@ -626,34 +722,38 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
       }
       const nodes = res.nodes || [];
-      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...(res.edges || [])]);
+      setElements((prev) => mergeGraphElements(prev, [...ringPositions(nodes, center), ...(res.edges || [])]));
       omittedOffsetRef.current += nodes.length;
       if ((res.remaining ?? 0) === 0) setTruncated(false);
     } catch (err) {
+      if (graphGeneration.current !== generation) return;
       console.error(err);
       toast.error(err?.message || 'Could not load more elements.');
     } finally {
-      setLoadingMore(false);
+      if (graphGeneration.current === generation) setLoadingMore(false);
     }
   }, [loadingMore, truncated]);
 
   // Load *every* remaining element, paging until nothing is left. Offered by the
-  // "Cargar todos" button, which only shows while the user is searching or has
+  // "Load all" button, which only shows while the user is searching or has
   // filtered the graph, when seeing the whole element set actually matters.
   const loadAllElements = useCallback(async () => {
-    if (!datasetIdRef.current || loadingMore || !truncated) return;
+    if (!graphReady.current || loadingMore || !truncated) return;
+    const generation = graphGeneration.current;
+    const context = graphContext.current;
     setLoadingMore(true);
     try {
       const nodes = [];
       const edges = [];
       let offset = omittedOffsetRef.current;
       while (true) {
-        const res = await api.getGraphElements(datasetIdRef.current, {
+        const res = await api.getGraphElements(context.datasetId, {
           offset,
           limit: 1000,
-          from: timeRangeRef.current.from,
-          to: timeRangeRef.current.to,
+          from: context.from,
+          to: context.to,
         });
+        if (graphGeneration.current !== generation) return;
         const pageNodes = res.nodes || [];
         nodes.push(...pageNodes);
         edges.push(...(res.edges || []));
@@ -666,20 +766,23 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         const ext = cy.extent();
         center = { x: (ext.x1 + ext.x2) / 2, y: (ext.y1 + ext.y2) / 2 };
       }
-      setElements((prev) => [...prev, ...ringPositions(nodes, center), ...edges]);
+      setElements((prev) => mergeGraphElements(prev, [...ringPositions(nodes, center), ...edges]));
       omittedOffsetRef.current = offset;
       setTruncated(false);
     } catch (err) {
+      if (graphGeneration.current !== generation) return;
       console.error(err);
       toast.error(err?.message || 'Could not load all elements.');
     } finally {
-      setLoadingMore(false);
+      if (graphGeneration.current === generation) setLoadingMore(false);
     }
   }, [loadingMore, truncated]);
 
   const expandCluster = useCallback(async (clusterId) => {
     const cy = cyRef.current;
-    if (!cy || !datasetIdRef.current) return;
+    if (!cy || !graphReady.current) return;
+    const generation = graphGeneration.current;
+    const context = graphContext.current;
     const clusterNode = cy.getElementById(clusterId);
     if (clusterNode.empty()) return;
 
@@ -691,13 +794,14 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
     const clusterEdgeData = clusterEdge.nonempty() ? clusterEdge.data() : null;
 
     try {
-      const res = await api.getCluster(datasetIdRef.current, clusterId, timeRangeRef.current);
+      const res = await api.getCluster(context.datasetId, clusterId, context);
+      if (graphGeneration.current !== generation) return;
       const nodes = res.nodes || [];
       const edges = res.edges || [];
-      setElements(prev => prev
-        .filter(el => el.data.id !== clusterId && el.data.id !== res.cluster_edge_id)
-        .concat(ringPositions(nodes, origin), edges)
-      );
+      setElements(prev => mergeGraphElements(prev
+        .filter(el => el.data.id !== clusterId && el.data.id !== res.cluster_edge_id),
+        [...ringPositions(nodes, origin), ...edges]
+      ));
       setExpandedClusters(prev => ({
         ...prev,
         [clusterId]: {
@@ -709,6 +813,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
       }));
       toast.info(`Expanded ${nodes.length} collapsed element${nodes.length === 1 ? '' : 's'}.`);
     } catch (err) {
+      if (graphGeneration.current !== generation) return;
       console.error(err);
       toast.error('Could not expand the cluster.');
     }
@@ -951,7 +1056,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
 
   const searchHasNoMatches = Boolean(searchQuery && matchedIds && matchedIds.size === 0);
 
-  // "Cargar todos" is offered whenever the user is actively narrowing the graph:
+  // "Load all" is offered whenever the user is actively narrowing the graph:
   // a global search term, or at least one checkbox hidden in the Event Types,
   // Users or PIDs filters. Only then does loading the full set matter.
   const showLoadAll =
@@ -999,8 +1104,9 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
             </button>
             <button
                 onClick={resetLayout}
-                className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                title="Clear the saved arrangement and re-run the force layout"
+                disabled={hasActiveTimeRange}
+                className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                title={hasActiveTimeRange ? 'Clear the time filter before resetting the saved layout' : 'Clear the saved arrangement and re-run the force layout'}
                 aria-label="Reset layout"
             >
                 <RotateCcw size={14} />
@@ -1090,16 +1196,16 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
         {truncated && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-slate-200 dark:border-slate-700 rounded shadow px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
             <span>
-              Mostrando {elements.length} de {totalElements} elementos
+              Showing {elements.length} of {totalElements} elements
             </span>
             {showLoadAll ? (
               <button
                 onClick={loadAllElements}
                 disabled={loadingMore}
-                title="Cargar todos los elementos restantes"
+                title="Load all remaining elements"
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
               >
-                {loadingMore ? 'Cargando…' : 'Cargar todos'}
+                {loadingMore ? 'Loading…' : 'Load all'}
               </button>
             ) : (
               <button
@@ -1107,7 +1213,7 @@ export default function GraphView({ datasetId, focusElementId, onFocusConsumed }
                 disabled={loadingMore}
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-2 py-1 rounded font-semibold transition-colors"
               >
-                {loadingMore ? 'Cargando…' : `Cargar más (${totalElements - elements.length})`}
+                {loadingMore ? 'Loading…' : `Load more (${totalElements - elements.length})`}
               </button>
             )}
           </div>

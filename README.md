@@ -34,14 +34,27 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
   placeholder that loads on demand. Processes and their `Spawns` edges stay
   visible, so the graph remains connected.
 - **Timeline & playback:** a chronological view of the dataset's events with
-  play/pause, speed control and a scrubber; clicking an event jumps to the
-  matching element in the graph. Event times are normalised at upload
+  play/pause, speed control and a scrubber. In Timeline view the graph remains
+  above the list; playback and manual navigation center and highlight each
+  event's matching element without changing tabs or rebuilding the layout.
+  Paged or clustered elements are loaded on demand, and additional timeline
+  pages are fetched automatically during playback.
+  The timeline follows the graph's applied time range, search, event-type, user
+  and PID filters; unmapped events that produce no graph elements are excluded.
+  Visual-only Hide, focus and collapsed clusters do not remove timeline events.
+  Event times are normalised at upload
   (`event_time`), so events without a timestamp keep insertion order.
 - **Deep inspection:** Click any node or edge to inspect its metadata and the
   raw log events behind it, with copy-to-clipboard.
 - **Schema migrations:** Alembic runs automatically on backend startup.
 - **Tested & automated:** A pytest suite and GitHub Actions CI (backend tests +
   frontend lint/build).
+
+The graph's initial response respects `MAX_INITIAL_ELEMENTS` even for dense
+process graphs; omitted nodes and edges are retrieved in pages. Time-filtered
+search uses the same event window as the graph, and saved layouts are only
+updated from an unfiltered graph. Uploads commit as a single transaction: failed
+imports leave no partial dataset.
 
 ## Supported Formats & Vendor Detection
 
@@ -70,10 +83,10 @@ products. Events that match neither marker are still stored (event type
    A process hub's exclusively-owned artifact children are collapsed into `+N`
    cluster placeholders and expanded on demand
    (`/api/graph/{id}/clusters/…`); process nodes are never collapsed.
-4. **Timeline** — `GET /api/graph/{id}/timeline` returns the dataset's events
-   ordered by their normalised `event_time` (paginated and filterable), and the
-   frontend renders the sequence with playback. Each entry links back to its
-   graph node so a click jumps to it.
+4. **Timeline** — `GET /api/graph/{id}/timeline` returns mapped events matching
+   the graph filters, ordered by their normalised `event_time` (paginated and
+   filterable). Each entry carries server-side-derived element IDs; a click
+   loads and highlights the relevant graph relationship alongside the timeline.
 5. **Visualise** — the React frontend renders the graph and applies all
    filtering client-side.
 
@@ -141,6 +154,7 @@ All settings are read from the environment (via `.env` in Docker Compose).
 | `GRAPH_CACHE_SIZE` | backend | `4` | Generated-graph cache entries kept in memory |
 | `GRAPH_CACHE_TTL_SECONDS` | backend | `300` | Cached graph lifetime in seconds (`0` disables expiry) |
 | `CLUSTER_MIN_CHILDREN` | backend | `50` | Exclusively-owned descendants a hub needs before collapsing into a cluster placeholder (`0` disables) |
+| `MAX_INITIAL_ELEMENTS` | backend | `5000` | Maximum nodes plus edges in the initial graph response (`0` disables truncation) |
 | `SECRET_KEY` | backend | *(ephemeral)* | Secret used to sign session cookies. Set a strong random value for anything beyond local dev |
 | `SESSION_COOKIE_SECURE` | backend | `false` | Set to `true` to restrict the session cookie to HTTPS |
 | `VITE_API_URL` | frontend | `http://localhost:8000` | Base URL of the backend API |
@@ -194,10 +208,11 @@ uvicorn main:app --reload
 | `DELETE` | `/api/datasets/{dataset_id}` | Delete a dataset and all of its events |
 | `GET` | `/api/graph/{dataset_id}` | Cytoscape elements and aggregated unmapped-event counts for a dataset |
 | `GET` | `/api/graph/{dataset_id}/element-logs?element_id=…` | Raw log events for one node/edge (lazily loaded evidence) |
+| `GET` | `/api/graph/{dataset_id}/focus?element_id=…` | Retrieve an element and its connected nodes (including clustered or paged elements) for timeline focus |
 | `GET` | `/api/graph/{dataset_id}/search?q=…` | Ids of elements matching the search terms (server-side search) |
 | `GET` | `/api/graph/{dataset_id}/clusters/{cluster_id}` | Hidden elements of a collapsed cluster (on-demand expansion) |
 | `GET` | `/api/graph/{dataset_id}/neighbors?element_id=…&depth=…` | Subgraph within N hops of an element (1–3) |
-| `GET` | `/api/graph/{dataset_id}/timeline?offset=…&limit=…&event_type=…&q=…&from=…&to=…` | Events in chronological order (paginated, compact summaries) |
+| `GET` | `/api/graph/{dataset_id}/timeline?offset=…&limit=…&event_type=…&q=…&from=…&to=…` | Graph-mapped events in chronological order (paginated, compact summaries); also accepts `graph_q` and repeated `hidden_event_type`, `hidden_user`, `hidden_pid` filters |
 | `GET` | `/api/graph/{dataset_id}/layout` | Saved node positions for the dataset |
 | `PUT` | `/api/graph/{dataset_id}/layout` | Persist node positions for the dataset |
 | `GET` | `/` | Liveness/status check |
@@ -232,6 +247,22 @@ starts (`alembic upgrade head`). The initial migration is idempotent, so it is
 safe on both fresh databases and databases previously created via
 `Base.metadata.create_all`.
 
+The timeline search uses a PostgreSQL `pg_trgm` GIN expression index on the
+JSONB event text and a composite `(dataset_id, event_time, id)` index. Migration
+`0006_timeline_search_indexes` creates them; the database user running migrations
+must be permitted to install the trusted `pg_trgm` extension. Index creation on
+an existing large dataset may take time and consume temporary disk space. To
+measure search performance on a representative PostgreSQL dataset, run:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id FROM log_events
+WHERE dataset_id = 1 AND CAST(data AS text) ILIKE '%example-term%';
+```
+
+Compare execution time and buffer reads before/after migration for a term at
+least three characters long; short terms often cannot use a trigram index.
+
 Create a new revision after changing `app/models.py`:
 
 ```bash
@@ -245,6 +276,7 @@ alembic revision --autogenerate -m "describe your change"
 cd frontend
 npm ci
 npm run lint
+npm run test
 npm run build
 npm run dev        # dev server on http://localhost:5173
 ```

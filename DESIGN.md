@@ -253,6 +253,11 @@ Defined in `frontend/src/components/cytoscapeStyles.js`.
 - **Dashed edges:** `.dashed` class → `line-style: dashed`.
 - **Hidden:** `.hidden` → `display: none` (used by filters).
 - **Spotlight:** `.dimmed` → `opacity: 0.12` (selected neighbourhood only).
+- **Timeline playback:** `.playback-active` uses a bright blue border on nodes
+  or a thicker blue stroke and arrow on edges. `.playback-context` temporarily
+  reveals hidden edge endpoints; removing the class restores existing filters.
+  The graph stays mounted above the timeline, so each step moves the viewport
+  without recalculating the node layout.
 - **Selection:** selected node gets a `#ffffff` border of width 4 and
   `overlay-opacity: 0`; selected edge width 4.
 - **Cluster placeholder:** `group="cluster"` nodes (diamond) carry a `+N` label

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -18,6 +18,9 @@ class Dataset(Base):
 
 class LogEvent(Base):
     __tablename__ = "log_events"
+    __table_args__ = (
+        Index("ix_log_events_dataset_time_id", "dataset_id", "event_time", "id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)

@@ -7,6 +7,11 @@ import AuthPage from './components/AuthPage';
 import { api } from './api/client';
 import { useTheme } from './hooks/useTheme';
 
+const emptyGraphFilters = () => ({
+  rangeFrom: null, rangeTo: null, globalSearch: '',
+  eventTypes: {}, users: {}, pids: {},
+});
+
 function App() {
   const { theme, cycleTheme } = useTheme();
   const [authState, setAuthState] = useState({
@@ -20,15 +25,30 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [view, setView] = useState('graph');
-  // Element requested by the timeline: focused by the graph once it loads.
-  const [focusElementId, setFocusElementId] = useState(null);
+  // The graph remains mounted during playback; only the current event is highlighted.
+  const [playbackEntry, setPlaybackEntry] = useState(null);
+  const [playbackReadyId, setPlaybackReadyId] = useState(null);
+  const [playbackError, setPlaybackError] = useState(null);
+  const [graphFilters, setGraphFilters] = useState(emptyGraphFilters);
 
-  const handleSelectTimelineElement = useCallback((elementId) => {
-    setFocusElementId(elementId);
-    setView('graph');
+  const handleSelectTimelineElement = useCallback((entry) => {
+    setPlaybackEntry(previous => entry?.focus_element_id
+      ? { ...entry, requestId: (previous?.requestId || 0) + 1 }
+      : null);
+    setPlaybackReadyId(null);
+    setPlaybackError(null);
   }, []);
 
-  const handleFocusConsumed = useCallback(() => setFocusElementId(null), []);
+  const handlePlaybackReady = useCallback((eventId) => setPlaybackReadyId(eventId), []);
+  const handlePlaybackError = useCallback((message) => setPlaybackError(message), []);
+
+  const selectDataset = useCallback((id) => {
+    setActiveDataset(id);
+    setGraphFilters(emptyGraphFilters());
+    setPlaybackEntry(null);
+    setPlaybackReadyId(null);
+    setPlaybackError(null);
+  }, []);
 
   const checkAuth = async () => {
     try {
@@ -71,6 +91,10 @@ function App() {
     }
     setDatasets([]);
     setActiveDataset(null);
+    setPlaybackEntry(null);
+    setPlaybackReadyId(null);
+    setPlaybackError(null);
+    setGraphFilters(emptyGraphFilters());
     setAuthState({ loading: false, authenticated: false, needsSetup: false, username: null });
   };
 
@@ -91,7 +115,7 @@ function App() {
       <Sidebar
         datasets={datasets}
         activeDataset={activeDataset}
-        setActiveDataset={setActiveDataset}
+        setActiveDataset={selectDataset}
         fetchDatasets={fetchDatasets}
         isUploading={isUploading}
         setIsUploading={setIsUploading}
@@ -105,7 +129,7 @@ function App() {
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="flex items-center gap-1 px-3 py-1.5 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
           <button
-            onClick={() => setView('graph')}
+            onClick={() => { setView('graph'); setPlaybackEntry(null); setPlaybackReadyId(null); }}
             aria-pressed={view === 'graph'}
             className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded transition-colors ${
               view === 'graph'
@@ -129,18 +153,30 @@ function App() {
             Timeline
           </button>
         </div>
-        {view === 'graph' ? (
-          <GraphView
-            datasetId={activeDataset}
-            focusElementId={focusElementId}
-            onFocusConsumed={handleFocusConsumed}
-          />
-        ) : (
-          <TimelineView
-            datasetId={activeDataset}
-            onSelectElement={handleSelectTimelineElement}
-          />
-        )}
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          <div className="flex-1 min-h-0 min-w-0">
+            <GraphView
+              key={activeDataset}
+              datasetId={activeDataset}
+              graphFilters={graphFilters}
+              setGraphFilters={setGraphFilters}
+              playbackEntry={view === 'timeline' ? playbackEntry : null}
+              onPlaybackReady={handlePlaybackReady}
+              onPlaybackError={handlePlaybackError}
+            />
+          </div>
+          {view === 'timeline' && (
+            <div className="h-[38vh] max-h-[50%] min-h-44 min-w-0 border-t border-slate-200 dark:border-slate-700">
+              <TimelineView
+                datasetId={activeDataset}
+                graphFilters={graphFilters}
+                onSelectElement={handleSelectTimelineElement}
+                playbackReadyId={playbackReadyId}
+                playbackError={playbackError}
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

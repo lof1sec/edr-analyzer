@@ -75,7 +75,7 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `backend/app/parsers/vendor.py` — vendor / event-type detection from fields.
 - `backend/app/parsers/builder.py` — `GraphBuilder`, node/edge ids, digests,
   per-element `first_time`/`last_time` (epoch ms of the earliest/latest event on
-  an element, shown in Node Details).
+  an element, shown in Node Details), and the server-only event-to-element map.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
 - `backend/app/parsers/events.py` — shared per-vendor actor/target/user/host
   extraction (`describe_event`), used by the graph builder and the timeline.
@@ -95,6 +95,8 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   optional `from`/`to` window (epoch ms) that filters the events by
   `event_time`; `GET /{dataset_id}/time-range` returns the dataset's full span
   for the UI picker.
+- `backend/alembic/versions/0006_timeline_search_indexes.py` — PostgreSQL
+  `pg_trgm` index for timeline substring search plus the dataset/time/id index.
 - `backend/app/routers/graph_cache.py` — bounded process-local LRU + TTL of
   generated graphs, keyed by `(dataset_id, from_ms, to_ms)`; invalidated (all
   ranges) on dataset delete/upload.
@@ -108,13 +110,23 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - `frontend/src/api/client.js` — **single** place for API calls; always use it.
 - `frontend/src/components/GraphView.jsx` — the large graph component (be careful).
 - `frontend/src/components/TimelineView.jsx` — chronological list + playback;
-  `App.jsx` toggles Graph/Timeline and hands a clicked element to `GraphView`
-  via the `focusElementId` prop.
+  `App.jsx` owns shared graph/time filters and keeps `GraphView` mounted alongside
+  Timeline during playback. Each entry is passed via `playbackEntry`; the graph
+  acknowledges its highlight before the timeline advances.
 - `frontend/src/components/AuthPage.jsx` — login / first-run setup gate.
 - `frontend/src/components/Toast.jsx` + `hooks/useToast.js` — app-wide toasts.
 - `frontend/src/components/EmptyState.jsx` — shared empty/placeholder state.
 - `frontend/src/hooks/useTheme.js` — light/dark/system theme controller.
 - `frontend/src/hooks/useDebouncedValue.js` — debounce helper.
+
+## Documentation language
+
+**All documentation is written in English.** Anything added to `TODO.md`,
+`README.md`, `DESIGN.md` and `AGENTS.md` must be in English, regardless of the
+language used in conversation or commit discussion. Keep entries consistent with
+the surrounding prose (same headings, tables, legends and terminology). When
+translating existing content, translate faithfully — do not drop or reword
+technical detail.
 
 ## Conventions & invariants (do not break)
 
@@ -127,7 +139,8 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
      unique per machine, so host-scoping stops the same PID on two hosts from
      collapsing into one node. Parsers must reuse the id returned by
      `get_or_create_process_node` for their edges and for artifact ids that
-     embed the owning process. `_timeline_element_ids` composes the same id.
+     embed the owning process. Timeline IDs are recorded from the actual
+     builder operations rather than re-created from raw PID fields.
    - The **displayed** PID (node `label`/`title` and the `pid` field in `data`)
      is the bare `pid`; only the *id* stays host-scoped. So the UI shows `600`
      while the same PID on two hosts remains two distinct nodes (the host is
@@ -144,8 +157,8 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
    on startup; the initial migration is intentionally idempotent.
 7. **All backend API calls go through `frontend/src/api/client.js`.**
 8. **Raw events and the search index stay out of element data.**
-   `build_cytoscape_elements()` returns lightweight `elements` plus `raw_logs`
-   and `search_index` side maps. The browser fetches evidence via
+   `build_cytoscape_elements()` returns lightweight `elements` plus `raw_logs`,
+   `search_index` and `event_elements` side maps. The browser fetches evidence via
    `/api/graph/{id}/element-logs?element_id=…` and resolves the global search via
    `/api/graph/{id}/search?q=…`. Keep it that way: shipping raw logs inside
    `elements` re-introduces the duplication and per-keystroke JSON serialisation
@@ -173,12 +186,20 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
     row per dataset) and are deleted with the dataset.
 11. **Timeline entries are derived summaries, not raw logs.** `event_time` is
     normalised at upload (`extract_timestamp`); the timeline endpoint returns one
-    compact entry per event (time, type, summary, best-effort element ids) and
-    never ships raw events. Playback loops over the loaded page client-side.
+    compact entry per mapped event (time, type, summary, actual element ids) and
+    never ships raw events. It applies the graph's time/search/event-type/user/PID
+    filters before counting and paging. Hide, focus depth and collapsed/paged
+    elements are presentation only. Playback waits for each graph highlight and
+    prefetches subsequent timeline pages without rebuilding the graph layout.
+12. **Uploads are atomic and graph views are window-scoped.** Batch inserts share
+    one transaction until upload succeeds; a failed upload rolls back all rows.
+    Search uses the graph's active time window. Only an unfiltered graph may
+    overwrite the dataset's saved layout; async page/cluster responses must not
+    update a different dataset or time window.
 
 ## Testing
 
-- Backend: `backend/tests/` (107 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (130 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
@@ -198,13 +219,14 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
 - Backend lint: `cd backend && ruff check .` (config in `backend/ruff.toml`).
   Run `ruff check --fix .` before committing. FastAPI's `Depends`/`File`/`Query`
   in defaults are intentionally exempt via `B008`.
-- Frontend: `npm run lint` (oxlint) and `npm run build`. A handful of `react`
+- Frontend: `npm run lint` (oxlint), `npm run test` (Node's built-in runner)
+  and `npm run build`. A handful of `react`
   warnings are tolerated (several `set-state-in-effect` for async data loads in
   `App.jsx`, `GraphView.jsx` and `TimelineView.jsx`, plus one `react(refs)` for
   intentionally reading `initialPositions` in a `useMemo`). `oxlint` exits `0` on
   warnings; do not fail the build over these.
 - CI (`.github/workflows/ci.yml`) runs on push/PR to `main` and `v2`
-  (backend: ruff + pytest; frontend: lint + build).
+  (backend: ruff + pytest; frontend: lint + test + build).
 
 ## Commit style
 

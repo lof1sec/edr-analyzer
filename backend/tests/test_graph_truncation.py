@@ -70,6 +70,41 @@ def test_truncate_elements_disabled_when_cap_not_positive():
     assert omitted_nodes == []
 
 
+def test_dense_process_backbone_respects_total_cap_and_pages_all_edges():
+    nodes = [_node("p0"), _node("p1"), _node("p2")]
+    edges = [_edge(f"e{i}", "p0", "p1") for i in range(20)]
+    selected_nodes, selected_edges, omitted_nodes, omitted_edges = _truncate_elements(
+        nodes, edges, cap=5
+    )
+    assert len(selected_nodes) + len(selected_edges) <= 5
+    assert {edge["data"]["id"] for edge in selected_edges + omitted_edges} == {
+        edge["data"]["id"] for edge in edges
+    }
+    assert len(omitted_nodes) > 0
+
+
+def test_dense_process_edges_are_recovered_by_pages(admin_client, monkeypatch):
+    monkeypatch.setenv("MAX_INITIAL_ELEMENTS", "5")
+    rows = b"".join(
+        b"ProcessCreated,H1,500,600,services.exe,svchost.exe\n" for _ in range(20)
+    )
+    dataset_id = _upload(admin_client, _HEADER + rows).json()["dataset_id"]
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    initial = graph["elements"]
+    assert len(initial["nodes"]) + len(initial["edges"]) <= 5
+    edges = {edge["data"]["id"] for edge in initial["edges"]}
+    offset = 0
+    while True:
+        page = admin_client.get(
+            f"/api/graph/{dataset_id}/elements", params={"offset": offset, "limit": 1}
+        ).json()
+        edges.update(edge["data"]["id"] for edge in page["edges"])
+        offset += len(page["nodes"])
+        if page["remaining"] == 0:
+            break
+    assert len(edges) == graph["total_edges"] == 20
+
+
 def test_large_graph_is_truncated_and_pages_recover_everything(admin_client, monkeypatch):
     monkeypatch.setenv("MAX_INITIAL_ELEMENTS", "5")
     rows = b"".join(
