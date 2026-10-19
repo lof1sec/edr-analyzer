@@ -102,7 +102,7 @@ def test_dense_process_edges_are_recovered_by_pages(admin_client, monkeypatch):
         offset += len(page["nodes"])
         if page["remaining"] == 0:
             break
-    assert len(edges) == graph["total_edges"] == 20
+    assert len(edges) == graph["total_edges"] == 40  # 20 spawns + 20 reporter observations
 
 
 def test_large_graph_is_truncated_and_pages_recover_everything(admin_client, monkeypatch):
@@ -114,8 +114,8 @@ def test_large_graph_is_truncated_and_pages_recover_everything(admin_client, mon
 
     graph = admin_client.get(f"/api/graph/{dataset_id}").json()
     assert graph["truncated"] is True
-    assert graph["total_nodes"] == 11  # 1 process hub + 10 file artifacts
-    assert graph["total_edges"] == 10
+    assert graph["total_nodes"] == 21  # hub, 10 files and 10 observations
+    assert graph["total_edges"] == 20  # 10 semantic + 10 reporter
     assert len(graph["elements"]["nodes"]) + len(graph["elements"]["edges"]) <= 5
 
     # Walk the pages; every returned edge must reference already-loaded nodes.
@@ -140,8 +140,8 @@ def test_large_graph_is_truncated_and_pages_recover_everything(admin_client, mon
             break
         offset += len(page["nodes"])
 
-    assert total_nodes == 11
-    assert total_edges == 10
+    assert total_nodes == graph["total_nodes"] == 21
+    assert total_edges == graph["total_edges"] == 20
 
 
 def test_small_graph_is_not_truncated(admin_client):
@@ -150,8 +150,8 @@ def test_small_graph_is_not_truncated(admin_client):
 
     graph = admin_client.get(f"/api/graph/{dataset_id}").json()
     assert graph["truncated"] is False
-    assert graph["total_nodes"] == 2
-    assert graph["total_edges"] == 1
+    assert graph["total_nodes"] == 3  # process, file and observation
+    assert graph["total_edges"] == 2  # semantic and reporter
 
     page = admin_client.get(f"/api/graph/{dataset_id}/elements").json()
     assert page["nodes"] == []

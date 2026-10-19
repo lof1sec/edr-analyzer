@@ -120,6 +120,7 @@ def _truncate_elements(nodes, edges, cap):
             if (e["data"]["target"] if e["data"]["source"] == aid else e["data"]["source"])
             in selected_process
         ]
+        # Include isolated observations, and only edges with admitted endpoints.
         cost = 1 + len(add_edges)
         if cost > budget:
             continue
@@ -127,6 +128,17 @@ def _truncate_elements(nodes, edges, cap):
         for e in add_edges:
             selected_edge_ids.add(e["data"]["id"])
         budget -= cost
+
+    # Contextual edges between event and host/account/file artifacts are not
+    # process edges; admit them only after both endpoints have been selected.
+    for edge in edges:
+        data = edge["data"]
+        if (data["id"] not in selected_edge_ids
+                and data["source"] in selected_process | selected_artifacts
+                and data["target"] in selected_process | selected_artifacts
+                and budget > 0):
+            selected_edge_ids.add(data["id"])
+            budget -= 1
 
     selected_ids = selected_process | selected_artifacts
     selected_nodes = [n for n in nodes if n["data"]["id"] in selected_ids]
@@ -516,7 +528,7 @@ def _timeline_view(payload, hidden_event_types, hidden_users, hidden_pids, graph
     }
     visible_nodes = {
         node_id for node_id in visible_nodes
-        if nodes.get(node_id, {}).get("group") == "process" or node_id in visible_artifacts
+        if nodes.get(node_id, {}).get("group") in {"process", "event"} or node_id in visible_artifacts
     }
 
     result = {}
@@ -524,13 +536,20 @@ def _timeline_view(payload, hidden_event_types, hidden_users, hidden_pids, graph
         time_and_type = payload["event_times"].get(event_id)
         if not time_and_type or time_and_type[1] in hidden_event_types:
             continue
+        # Contextual observation nodes must not resurrect a row whose actor was
+        # explicitly hidden by an identity filter.
+        if any(nodes.get(node_id, {}).get("group") == "process" and node_id not in allowed_nodes
+               for node_id in refs["nodes"]):
+            continue
         event_edges = refs["edges"] & visible_edges
         event_nodes = refs["nodes"] & visible_nodes
         # A hidden relationship cannot be kept alive by its shared actor node.
         if not event_edges and (refs["edges"] or not event_nodes):
             continue
         ids = sorted(event_nodes) + sorted(event_edges)
-        focus_id = sorted(event_edges)[0] if event_edges else ids[0]
+        semantic_edges = sorted(edge_id for edge_id in event_edges
+                                if edges[edge_id].get("label") not in {"Observed on", "Reported by"})
+        focus_id = semantic_edges[0] if semantic_edges else (sorted(event_edges)[0] if event_edges else ids[0])
         result[event_id] = {
             "element_ids": ids,
             "focus_element_id": focus_id,

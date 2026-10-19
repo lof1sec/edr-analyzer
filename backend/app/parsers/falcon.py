@@ -1,6 +1,22 @@
 import textwrap
 
 from app.parsers.builder import GraphBuilder, as_text, hash_str, string_hash
+from app.parsers.falcon_additional import ADDITIONAL_EVENTS, parse_additional_falcon_event
+from app.parsers.falcon_current import EVENTS as CURRENT_EVENTS
+from app.parsers.falcon_current import parse_falcon_current
+from app.parsers.falcon_current_block import EVENTS as CURRENT_BLOCK_EVENTS
+from app.parsers.falcon_current_block import parse_falcon_current_block
+from app.parsers.falcon_families import FAMILY_EVENTS, parse_falcon_family
+from app.parsers.falcon_next import EVENTS as NEXT_EVENTS
+from app.parsers.falcon_next import parse_falcon_next
+from app.parsers.falcon_process_to_io import EVENTS as IO_EVENTS
+from app.parsers.falcon_process_to_io import parse_falcon_process_to_io
+from app.parsers.falcon_rs import EVENTS as RS_EVENTS
+from app.parsers.falcon_rs import parse_falcon_rs
+from app.parsers.falcon_targeted import TARGETED_EVENTS, parse_targeted_falcon_event
+from app.parsers.falcon_user_block import EVENTS as USER_BLOCK_EVENTS
+from app.parsers.falcon_user_block import NETWORK as USER_BLOCK_NETWORK
+from app.parsers.falcon_user_block import parse_falcon_user_block
 
 # CrowdStrike CreateSocket enum values (numeric code -> readable label). Kept
 # minimal and defensive: unknown codes fall back to the raw value.
@@ -32,6 +48,56 @@ _CONNECTION_DIRECTIONS = {
     "4": "UNKNOWN",
 }
 
+_MODULE_LOAD_CLASSIFICATIONS = {
+    0x1: "FIRST_LOAD", 0x2: "RUNDLL32_TARGET", 0x4: "DETECT_TREE",
+    0x8: "MAPPED_FROM_KERNEL_MODE", 0x10: "UNUSUAL_EXTENSION",
+    0x20: "MOTW", 0x40: "SIGN_INFO_CONTINUITY", 0x80: "CLOUD_ALL",
+    0x100: "ORIGINAL_FILENAME_MISMATCH", 0x200: "REMOVABLE_MEDIA",
+    0x400: "DATA_EXTENSION", 0x800: "SYNTHETIC_LOAD",
+    0x1000: "CLOUDY_REQUEST",
+}
+_MODULE_CHARACTERISTICS = {
+    0x1: "RELOCS_STRIPPED", 0x2: "EXECUTABLE_IMAGE",
+    0x4: "LINE_NUMS_STRIPPED", 0x8: "LOCAL_SYMS_STRIPPED",
+    0x10: "AGGRESSIVE_WS_TRIM", 0x20: "LARGE_ADDRESS_AWARE",
+    0x80: "BYTES_RESERVED_LO", 0x100: "_32BIT_MACHINE",
+    0x200: "DEBUG_STRIPPED", 0x400: "REMOVABLE_RUN_FROM_SWAP",
+    0x800: "NET_RUN_FROM_SWAP", 0x1000: "FILE_SYSTEM",
+    0x2000: "FILE_DLL", 0x4000: "UP_SYSTEM_ONLY",
+    0x8000: "BYTES_RESERVED_HI",
+}
+_SIGN_INFO_FLAGS = {
+    0x1: "SELF_SIGNED", 0x2: "MS_SIGNED", 0x4: "TEST_SIGNED",
+    0x8: "MS_CROSS_SIGNED", 0x10: "CAT_SIGNED", 0x20: "DRM_SIGNED",
+    0x40: "DRM_TEST_SIGNED", 0x80: "MS_CAT_SIGNED",
+    0x100: "CATALOGS_RELOADED", 0x200: "NO_SIGNATURE",
+    0x400: "INVALID_SIGN_CHAIN", 0x800: "SIGN_HASH_MISMATCH",
+    0x1000: "NO_CODE_KEY_USAGE", 0x2000: "NO_PAGE_HASHES",
+    0x4000: "FAILED_CERT_CHECK", 0x8000: "NO_EMBEDDED_CERT",
+    0x10000: "FAILED_COPY_KEYS", 0x20000: "UNKNOWN_ERROR",
+    0x40000: "HAS_VALID_SIGNATURE", 0x80000: "EMBEDDED_SIGNED",
+    0x100000: "3RD_PARTY_ROOT", 0x200000: "TRUSTED_BOOT_ROOT",
+    0x400000: "UEFI_ROOT", 0x800000: "PRS_WIN81_ROOT",
+    0x1000000: "FLIGHT_ROOT", 0x2000000: "APPLE_SIGNED",
+    0x4000000: "ESBCACHE", 0x8000000: "NO_CACHED_DATA",
+    0x10000000: "CERT_EXPIRED", 0x20000000: "CERT_REVOKED",
+    0x40000000: "MS_ISSUED_3RD_PARTY",
+}
+_ZONE_IDENTIFIERS = {
+    0: "LOCAL_MACHINE", 1: "INTRANET", 2: "TRUSTED_SITES",
+    3: "INTERNET", 4: "RESTRICTED_SITES",
+}
+_IMAGE_SIGNATURE_LEVELS = dict(enumerate((
+    "UNCHECKED", "UNSIGNED", "ENTERPRISE", "CUSTOM1", "AUTHENTICODE",
+    "CUSTOM2", "STORE", "ANTIMALWARE", "MICROSOFT", "CUSTOM4", "CUSTOM5",
+    "DYNAMICCODEGEN", "WINDOWS", "WINDOWSPROTECTEDPROCESSLIGHT",
+    "WINDOWSTCB", "CUSTOM6",
+)))
+_IMAGE_SIGNATURE_TYPES = dict(enumerate((
+    "NONE", "EMBEDDED", "CACHE", "CATALOG_CACHED", "CATALOG_NOT_CACHED",
+    "CATALOG_HINT", "PACKAGE_CATALOG", "PPL_MITIGATED",
+)))
+
 
 def _decode_enum(table: dict, value) -> str:
     """Decode a numeric enum to its label, falling back to the raw value."""
@@ -40,13 +106,34 @@ def _decode_enum(table: dict, value) -> str:
     return table.get(str(value), str(value))
 
 
+def _decode_module_number(value, labels: dict, bitfield=False) -> str:
+    """Describe decimal/hex Falcon codes; preserve unknown or malformed values."""
+    text = as_text(value)
+    if not text:
+        return ""
+    try:
+        number = int(text, 16 if text.lower().startswith("0x") else 10)
+    except ValueError:
+        return text
+    if not bitfield:
+        return f"{labels[number]} ({text})" if number in labels else text
+    names = [name for flag, name in labels.items() if number & flag]
+    unknown = number & ~sum(labels)
+    if unknown:
+        names.append(hex(unknown))
+    return f"{', '.join(names) or 'NONE'} ({text})"
+
+
 def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
                        actor_name: str, target_id: str, target_name: str, username: str, hostname: str):
     parent_id = event.get("ParentProcessId")
     context_id = event.get("ContextProcessId")
     source_id = event.get("SourceProcessId")
 
-    if evt_type == "ProcessRollup2":
+    if evt_type in USER_BLOCK_NETWORK - {"NetworkListenIP4"} or evt_type == "IoSessionLoggedOn":
+        parse_falcon_user_block(builder, event, evt_type, username, hostname)
+
+    elif evt_type == "ProcessRollup2":
         cmdline = event.get("CommandLine", "No CommandLine")
         image_file = as_text(event.get("ImageFileName",
                                "Unknown Process")).split('\\')[-1]
@@ -113,7 +200,7 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             ancestry_text = (
                 f"[{evt_type}]\n"
                 f"Process Ancestry Chain:\n"
-                f" - Target: {base_file} (PID: {actor_ident})\n"
+                f" - Target: {base_file} (PID: {as_text(context_id or target_id)})\n"
                 f" - Parent: {p_name}\n"
                 f" - Grandparent: {gp_name}\n"
                 f" - Great-Grandparent: {ggp_name}"
@@ -164,36 +251,14 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 evt_type,
                 raw_event=event)
 
-    elif evt_type in ["UserLogon", "UserIdentity", "IoSessionLoggedOn"]:
-        actor_ident = context_id or source_id
-        if actor_ident:
-            actor_ident = builder.get_or_create_process_node(
-                actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
+    elif evt_type in CURRENT_BLOCK_EVENTS:
+        parse_falcon_current_block(builder, event, evt_type, username, hostname)
 
-            logon_type = event.get("LogonType", "Unknown")
-            domain = event.get("LogonDomain", "")
-            user_logon = event.get("UserName", "Unknown")
-            auth_pkg = event.get("AuthenticationPackage", "Unknown")
-            remote_ip = event.get("RemoteAddressIP4", "")
+    elif evt_type in CURRENT_EVENTS:
+        parse_falcon_current(builder, event, evt_type, username, hostname)
 
-            logon_node_id = f"logon_{actor_ident}_{event.get('timestamp')}"
-            display_label = f"Session: {evt_type}\nType: {logon_type}\n{domain}\\{user_logon}"
-
-            full_info = (f"[{evt_type}]\nUser: {domain}\\{user_logon}\n"
-                         f"Logon Type: {logon_type}\nAuth Package: {auth_pkg}")
-            if remote_ip:
-                full_info += f"\nRemote IP: {remote_ip}"
-
-            builder.add_or_update_artifact_node(
-                logon_node_id, display_label, full_info, "commandline", event)
-            builder.add_edge(
-                actor_ident,
-                logon_node_id,
-                "Auth Action",
-                "#33cc33",
-                evt_type,
-                dashed=True,
-                raw_event=event)
+    elif evt_type in TARGETED_EVENTS:
+        parse_targeted_falcon_event(builder, event, evt_type, username, hostname)
 
     elif evt_type in [
         "NewScriptWritten", "ScriptFileWrittenInfo", "DirectoryCreate", "CrxFileWritten", "PngFileWritten", "CabFileWritten",
@@ -316,12 +381,11 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
 
             if evt_type == "ScheduledTaskModified":
                 task_name = as_text(event.get("TaskName", "Unknown_Task"))
-                task_xml = as_text(event.get("TaskXml", ""))
                 node_id = f"task_{string_hash(task_name)}"
                 clean_task_name = task_name.replace('\\', '/').split('/')[-1]
                 display_label = f"Task:\n{clean_task_name}"
 
-                full_info = f"[{evt_type}]\nTask: {task_name}\nTactic: {tactic}\nTechnique: {technique}\n\nXML Snippet:\n{task_xml[:800]}..."
+                full_info = f"[{evt_type}]\nTask: {task_name}\nTactic: {tactic}\nTechnique: {technique}\nTask XML available in raw evidence"
                 builder.add_or_update_artifact_node(
                     node_id, display_label, full_info, "commandline", event)
                 builder.add_edge(
@@ -374,6 +438,50 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 "#b366ff",
                 evt_type,
                 raw_event=event)
+
+    elif evt_type == "ClassifiedModuleLoad":
+        # The module is loaded *into* TargetProcessId. ContextProcessId is the
+        # event's origin and must not be mistaken for the loading process.
+        module_path = as_text(event.get("ImageFileName"))
+        if target_id:
+            process_path = as_text(event.get("TargetImageFileName"))
+            process_name = process_path.replace("\\", "/").rstrip("/").split("/")[-1]
+            process_id = builder.get_or_create_process_node(
+                target_id, process_name or None, username, hostname, evt_type, event)
+            if process_id and module_path:
+                module_name = module_path.replace("\\", "/").rstrip("/").split("/")[-1]
+                module_id = f"module_{string_hash(module_path)}"
+                details = [f"[{evt_type}]", f"Module: {module_path}",
+                           f"Target Process: {process_path or target_id}"]
+                fields = {
+                    "SHA256": "SHA256HashData", "MD5": "MD5HashData",
+                    "Authenticode Hash": "AuthenticodeHashData",
+                    "Original Filename": "OriginalFilename", "Module Size": "ModuleSize",
+                    "Primary Module": "PrimaryModule", "Mapped From User Mode": "MappedFromUserMode",
+                    "Tree ID": "TreeId", "Host URL": "HostUrl", "Referrer URL": "ReferrerUrl",
+                    "Is Process Initializing": "IsProcessInitializing",
+                }
+                for label, field in fields.items():
+                    value = as_text(event.get(field))
+                    if value:
+                        details.append(f"{label}: {value}")
+                codes = {
+                    "Load Classification": ("ModuleLoadTelemetryClassification", _MODULE_LOAD_CLASSIFICATIONS, True),
+                    "Module Characteristics": ("ModuleCharacteristics", _MODULE_CHARACTERISTICS, True),
+                    "Signature Flags": ("SignInfoFlags", _SIGN_INFO_FLAGS, True),
+                    "Zone Identifier": ("ZoneIdentifier", _ZONE_IDENTIFIERS, False),
+                    "Image Signature Level": ("ImageSignatureLevel", _IMAGE_SIGNATURE_LEVELS, False),
+                    "Image Signature Type": ("ImageSignatureType", _IMAGE_SIGNATURE_TYPES, False),
+                }
+                for label, (field, labels, bitfield) in codes.items():
+                    value = _decode_module_number(event.get(field), labels, bitfield)
+                    if value:
+                        details.append(f"{label}: {value}")
+                builder.add_or_update_artifact_node(
+                    module_id, module_name or module_path, "\n".join(details), "module", event)
+                builder.add_edge(
+                    process_id, module_id, "Loads Module", "#b366ff", evt_type,
+                    raw_event=event)
 
     elif evt_type in ["AsepValueUpdate", "RegKeyCommit", "RegValueCommit", "RegSystemConfigValueUpdate"]:
         reg_key = as_text(event.get("RegObjectName", ""))
@@ -533,11 +641,9 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             actor_ident = builder.get_or_create_process_node(
                 actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
-            wrapped_cmd = textwrap.fill(cmd_history, width=60)
-
             builder.add_or_update_artifact_node(cmd_node_id,
-                                                wrapped_cmd,
-                                                f"[{evt_type}]\nCommand History:\n{cmd_history}",
+                                                "Command History",
+                                                f"[{evt_type}]\nCommand history recorded (see raw evidence)",
                                                 "commandline-exec",
                                                 event)
             builder.add_edge(
@@ -563,12 +669,9 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             sha256 = as_text(event.get("ContentSHA256HashData", "N/A"))
             short = script_name.replace("\\", "/").split("/")[-1] or "script"
             script_node_id = f"script_{string_hash(script_name or script_content)}"
-            snippet = (
-                script_content[:200] + "…" if len(script_content) > 200 else script_content
-            )
             script_info = f"[{evt_type}]\nScript: {script_name}\nSHA256: {sha256}"
-            if snippet:
-                script_info += f"\nContent:\n{snippet}"
+            if script_content:
+                script_info += "\nContent available in raw evidence"
 
             builder.add_or_update_artifact_node(
                 script_node_id, short, script_info, "file", event)
@@ -657,13 +760,12 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
     elif evt_type == "CriticalEnvironmentVariableChanged":
         actor_ident = context_id or source_id
         env_name = as_text(event.get("EnvironmentVariableName", ""))
-        env_value = as_text(event.get("EnvironmentVariableValue", ""))
         if actor_ident and env_name:
             actor_ident = builder.get_or_create_process_node(
                 actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
 
             env_node_id = f"env_{string_hash(env_name)}"
-            env_info = f"[{evt_type}]\nName: {env_name}\nValue: {env_value}"
+            env_info = f"[{evt_type}]\nName: {env_name}\nValue recorded (see raw evidence)"
             builder.add_or_update_artifact_node(
                 env_node_id, f"Env: {env_name}", env_info, "registry", event)
             builder.add_edge(
@@ -699,6 +801,24 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
                 "#00ffff",
                 evt_type,
                 raw_event=event)
+
+    elif evt_type in ADDITIONAL_EVENTS:
+        parse_additional_falcon_event(builder, event, evt_type, username, hostname)
+
+    elif evt_type in RS_EVENTS:
+        parse_falcon_rs(builder, event, evt_type, username, hostname)
+
+    elif evt_type in NEXT_EVENTS:
+        parse_falcon_next(builder, event, evt_type, username, hostname)
+
+    elif evt_type in FAMILY_EVENTS:
+        parse_falcon_family(builder, event, evt_type, username, hostname)
+
+    elif evt_type in IO_EVENTS:
+        parse_falcon_process_to_io(builder, event, evt_type, username, hostname)
+
+    elif evt_type in USER_BLOCK_EVENTS:
+        parse_falcon_user_block(builder, event, evt_type, username, hostname)
 
     else:
         builder.unmapped_events.append(evt_type)

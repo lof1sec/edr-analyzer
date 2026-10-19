@@ -2,14 +2,15 @@
 
 The app is single-tenant: the first run creates one admin account, and every
 user shares the same datasets. Sessions are signed httpOnly cookies managed by
-Starlette's ``SessionMiddleware`` (see ``main.py``); only the user id is stored
-in the session, never a token the browser JS could read.
+Starlette's ``SessionMiddleware`` (see ``main.py``); the session contains the
+user id and a CSRF nonce, never a bearer token for JS-readable storage.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
+from app.routers import csrf, login_limits
 from app.schemas import AuthStatus, ChangePasswordRequest, LoginRequest, SetupRequest, UserOut
 from app.security import hash_password, verify_password
 
@@ -48,6 +49,11 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/csrf")
+def csrf_token(request: Request):
+    return {"token": csrf.token(request)}
+
+
 @router.post("/setup", response_model=UserOut, status_code=201)
 def setup(payload: SetupRequest, request: Request, db: Session = Depends(get_db)):
     """Create the first admin account and log it in.
@@ -55,7 +61,9 @@ def setup(payload: SetupRequest, request: Request, db: Session = Depends(get_db)
     Only allowed while no user exists, so it cannot be used to add accounts
     after the initial setup.
     """
+    name = login_limits.check(request, payload.username)
     if _user_count(db) > 0:
+        login_limits.failed(name)
         raise HTTPException(status_code=403, detail="Setup has already been completed")
 
     user = User(username=payload.username, password_hash=hash_password(payload.password))
@@ -63,15 +71,21 @@ def setup(payload: SetupRequest, request: Request, db: Session = Depends(get_db)
     db.commit()
     db.refresh(user)
     request.session[SESSION_USER_KEY] = user.id
+    csrf.token(request)
+    login_limits.succeeded(name)
     return user
 
 
 @router.post("/login", response_model=UserOut)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    name = login_limits.check(request, payload.username)
     user = db.query(User).filter(User.username == payload.username.strip()).first()
     if user is None or not verify_password(payload.password, user.password_hash):
+        login_limits.failed(name)
         raise HTTPException(status_code=401, detail="Invalid username or password")
     request.session[SESSION_USER_KEY] = user.id
+    csrf.token(request)
+    login_limits.succeeded(name)
     return user
 
 

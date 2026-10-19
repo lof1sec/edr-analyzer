@@ -24,6 +24,34 @@ def describe_event(event: dict, vendor: str) -> dict:
         target_name = event.get("FileName") or event.get("TargetFileName", "")
         username = event.get("UserName", "Unknown")
         hostname = event.get("ComputerName", "")
+        if event.get("#event_simpleName") == "ClassifiedModuleLoad":
+            # The target process loads ImageFileName; ContextProcessId only
+            # identifies the origin of this telemetry record.
+            actor_id = target_id
+            process_path = event.get("TargetImageFileName")
+            actor_name = (process_path.replace("\\", "/").split("/")[-1]
+                          if isinstance(process_path, str) else None)
+            target_name = event.get("ImageFileName")
+        elif event.get("#event_simpleName") in ("InjectedThread", "DllInjection", "ProcessInjection"):
+            actor_name = event.get("InjectorImageFileName") or actor_name
+            target_name = (event.get("InjecteeImageFileName") or event.get("InjectedDll")
+                           or target_id)
+        elif event.get("#event_simpleName") == "NewExecutableRenamed":
+            target_name = event.get("TargetFileName")
+            actor_name = event.get("SourceFileName") or actor_name
+        elif event.get("#event_simpleName") == "ReflectiveDotnetModuleLoad":
+            target_name = (event.get("AssemblyName") or event.get("ModuleILPath")
+                           or event.get("DotnetModuleId"))
+        elif event.get("#event_simpleName") == "ScriptControlDetectInfo":
+            target_name = event.get("ScriptContentName") or event.get("PatternId")
+        elif event.get("#event_simpleName") == "SensitiveWmiQuery":
+            target_name = event.get("WmiQuery") or event.get("WmiNamespaceName")
+        elif event.get("#event_simpleName") == "CreateService":
+            actor_id = event.get("RpcClientProcessId") or actor_id
+            target_name = event.get("ServiceObjectName") or event.get("ServiceDisplayName")
+        elif event.get("#event_simpleName") == "RemoteCommandResponse":
+            actor_id = actor_name = target_id = None
+            target_name = event.get("CommandName") or event.get("CommandCode")
         if not actor_id and target_id:
             actor_id = target_id
     elif vendor == DEFENDER:
@@ -31,8 +59,13 @@ def describe_event(event: dict, vendor: str) -> dict:
         actor_name = event.get("InitiatingProcessFileName")
         target_id = event.get("ProcessId")
         target_name = event.get("FileName")
-        domain = event.get("AccountDomain", "")
-        user = event.get("AccountName", "Unknown")
+        if event.get("ActionType") == "KerberosConnectionInspected":
+            # Network inspection does not establish the AccountName as the actor.
+            domain = event.get("InitiatingProcessAccountDomain", "")
+            user = event.get("InitiatingProcessAccountName") or "Unknown"
+        else:
+            domain = event.get("AccountDomain", "")
+            user = event.get("AccountName", "Unknown")
         username = f"{domain}\\{user}" if domain and user != "Unknown" else user
         hostname = event.get("DeviceName", "")
     else:

@@ -50,6 +50,15 @@ If a Windows bind-mount edit does not appear, restart just that service
 
 ## Environment & configuration
 
+Production must replace the template database password and session signing key
+with **different**, independently generated secrets. The example values are not
+production credentials. Compose binds development PostgreSQL to localhost only.
+Mutating API calls use a session-bound CSRF token (`/api/auth/csrf`,
+`X-CSRF-Token`) and verify supplied origins; login/setup throttling is local to
+each backend process, so multiworker installations need a shared limiter.
+JSON events are capped at 8 MiB and 64 levels, CSV fields at 1 MiB, and graph
+artifact titles at 8192 characters (full evidence remains in raw logs).
+
 All settings come from the environment. `.env` is git-ignored; `.env.example`
 is the template. Compose builds `DATABASE_URL` from `POSTGRES_*`.
 
@@ -77,6 +86,16 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   per-element `first_time`/`last_time` (epoch ms of the earliest/latest event on
   an element, shown in Node Details), and the server-only event-to-element map.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
+- Defender `DeviceProcessEvents` is identified by explicit table markers, exclusive
+  process columns (`ProcessUniqueId`, `ProcessVersionInfo*`, integrity/token
+  fields), or unambiguous `ProcessCreated`/`OpenProcess` actor and target IDs.
+  `InitiatingProcessUniqueId` is shared across tables and is not a signature.
+  `ProcessCreated` links `InitiatingProcessId` to `ProcessId`; `OpenProcess`
+  does not imply creation and remains unmapped. Unmarked legacy exports retain
+  their other existing mappings.
+- `backend/app/parsers/falcon_additional.py` — additional Falcon graph mappings
+  (injection, rename, .NET module, script detections, WMI, services and remote
+  command responses); keep large script/output fields in raw evidence only.
 - `backend/app/parsers/events.py` — shared per-vendor actor/target/user/host
   extraction (`describe_event`), used by the graph builder and the timeline.
 - `backend/app/parsers/timestamps.py` — normalises an event's time to epoch
@@ -149,7 +168,10 @@ technical detail.
      **Never use Python's built-in `hash()`** (salted per process).
    - Edge ids: the `GraphBuilder._edge_seq` counter (`edge_1`, `edge_2`, …).
 3. **Uploads are streamed**, size-capped (`MAX_UPLOAD_SIZE_MB`), and inserted in
-   batches (`INSERT_BATCH_SIZE`). Keep the memory-bounded pattern.
+   batches (`INSERT_BATCH_SIZE`). Keep the memory-bounded pattern. JSON exports
+   may contain escaped NULs (`U+0000`); `datasets._remove_json_nuls` removes decoded NULs
+   from nested strings and keys before PostgreSQL JSONB insertion. Reject key
+   collisions after normalization rather than silently dropping event fields.
 4. **CORS is an explicit allowlist**; never revert to `*`.
 5. **Secrets never go in the repo.** `.env` is ignored; `.dockerignore` keeps
    caches and env files out of build contexts.
@@ -199,7 +221,7 @@ technical detail.
 
 ## Testing
 
-- Backend: `backend/tests/` (130 tests): pure parser/builder tests plus HTTP tests
+- Backend: `backend/tests/` (173 tests): pure parser/builder tests plus HTTP tests
   (`test_api.py`, `test_auth.py`, `test_bootstrap.py`) against an in-memory sqlite
   DB. Shared fixtures live in `tests/conftest.py`: `client` (fresh DB +
   `TestClient`), `db_session` and `admin_client` (creates the admin and logs in).
