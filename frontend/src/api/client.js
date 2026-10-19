@@ -1,4 +1,21 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+let csrfToken = null;
+let csrfPromise = null;
+
+async function getCsrfToken() {
+  if (!csrfPromise) {
+    csrfPromise = fetch(`${API_URL}/api/auth/csrf`, { credentials: 'include' })
+      .then(async response => {
+        if (!response.ok) throw new Error('Unable to obtain CSRF token');
+        csrfToken = (await response.json()).token;
+        return csrfToken;
+      }).catch(error => {
+        csrfPromise = null;
+        throw error;
+      });
+  }
+  return csrfPromise;
+}
 
 /**
  * Perform a request against the backend API and normalise errors.
@@ -9,9 +26,15 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
  * app can react to an expired session.
  */
 async function request(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { ...options.headers };
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    headers['X-CSRF-Token'] = await getCsrfToken();
+  }
   const response = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     ...options,
+    headers,
   });
 
   if (!response.ok) {
@@ -28,6 +51,10 @@ async function request(path, options = {}) {
   }
 
   if (response.status === 204) {
+    if (path === '/api/auth/logout') {
+      csrfToken = null;
+      csrfPromise = null;
+    }
     return null;
   }
   return response.json();

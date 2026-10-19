@@ -31,7 +31,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-from app.routers import graph_cache
+from app.routers import graph_cache, login_limits
 from main import app
 
 settings.register_profile(
@@ -68,6 +68,8 @@ app.dependency_overrides[get_db] = _override_get_db
 
 @pytest.fixture
 def _fresh_database():
+    login_limits._attempts.clear()
+    login_limits._failures.clear()
     Base.metadata.create_all(bind=engine)
     graph_cache.invalidate()
     yield
@@ -87,7 +89,16 @@ def db_session(_fresh_database):
 def client(_fresh_database):
     # No context manager: entering it would run the lifespan (PostgreSQL
     # migrations). A fresh TestClient also isolates the session cookie per test.
-    return TestClient(app)
+    class CSRFTestClient(TestClient):
+        def request(self, method, url, **kwargs):
+            if method.upper() not in ("GET", "HEAD", "OPTIONS"):
+                headers = dict(kwargs.pop("headers", None) or {})
+                if not any(key.lower() == "x-csrf-token" for key in headers):
+                    headers["X-CSRF-Token"] = super().get("/api/auth/csrf").json()["token"]
+                kwargs["headers"] = headers
+            return super().request(method, url, **kwargs)
+
+    return CSRFTestClient(app)
 
 
 @pytest.fixture

@@ -6,6 +6,8 @@ extract the event type from whichever marker is present.
 """
 from typing import Any
 
+from app.parsers.defender_catalog import ACTION_TABLES, EXCLUSIVE_FIELDS
+
 FALCON_EVENT_TYPE_FIELD = "#event_simpleName"
 DEFENDER_EVENT_TYPE_FIELD = "ActionType"
 
@@ -22,6 +24,12 @@ def get_vendor(event: Any) -> str:
         return FALCON
     if DEFENDER_EVENT_TYPE_FIELD in event:
         return DEFENDER
+    if any(event.get(key) in ACTION_TABLES for key in ("TableName", "SourceTable")
+           if isinstance(event.get(key), str)):
+        return DEFENDER
+    if any(event.get(field) not in (None, "") for fields in EXCLUSIVE_FIELDS.values()
+           for field in fields):
+        return DEFENDER
     return UNKNOWN
 
 
@@ -37,6 +45,10 @@ def extract_event_type(event: Any, default: str = "Unknown") -> str:
     if value is None:
         value = event.get(DEFENDER_EVENT_TYPE_FIELD)
     if value is None or value == "":
+        if get_vendor(event) == DEFENDER:
+            from app.parsers.defender import classify_defender_table
+
+            return classify_defender_table(event) or default
         return default
     return value if isinstance(value, str) else str(value)
 

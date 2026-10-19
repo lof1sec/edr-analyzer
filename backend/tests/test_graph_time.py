@@ -61,7 +61,8 @@ def test_graph_time_filter_keeps_only_events_in_window(admin_client):
             "to": _ms("2026-10-05T12:05:00+00:00"),
         },
     ).json()
-    assert _node_ids(exact) == {"600@H1", "file1.dll"}
+    assert {"600@H1", "file1.dll", "defender_event_2"} <= _node_ids(exact)
+    assert len(_node_ids(exact)) == 3  # process, artifact, observation
 
 
 def test_search_only_matches_events_in_the_active_window(admin_client):

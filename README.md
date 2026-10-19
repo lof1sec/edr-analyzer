@@ -14,7 +14,9 @@ keys, loaded modules, command lines and alerts appear as related artifacts.
   cookies; upload and graph endpoints require a session.
 - **Flexible ingestion:** Upload `.csv`, `.json` or `.jsonl` files. Parsing is
   streamed (no full-file buffering) and the upload size is capped with a
-  configurable limit.
+  configurable limit. Escaped NUL characters are stripped from JSON event
+  strings and keys before PostgreSQL JSONB storage; a key collision caused by
+  that cleanup is rejected with HTTP 400 rather than losing a field.
 - **Automatic vendor detection:** Defender vs CrowdStrike Falcon is detected
   from the event fields (`ActionType` / `#event_simpleName`), not the file
   extension, so a Falcon export delivered as CSV (or vice versa) is still mapped.
@@ -348,3 +350,29 @@ edr-analyzer/
 - The admin account lives in the database volume, not in the repo — two clones
   whose folder name is the same share the same Postgres volume and thus the same
   admin.
+# Deployment security notes
+
+The values in `.env.example` are placeholders, not usable production secrets.
+Set unique random `POSTGRES_PASSWORD` and `SECRET_KEY` values; never reuse the
+database password as the signing key. Set `SESSION_COOKIE_SECURE=true` behind
+HTTPS and restrict `CORS_ORIGINS` to your actual frontend origin. Docker Compose
+publishes PostgreSQL only on the development host's loopback interface; the
+backend connects through the private Compose network. Avoid exposing development
+services to untrusted networks.
+
+Uploads accept at most 8 MiB per JSON event, 64 nested container levels and
+1 MiB per CSV field in addition to the overall upload cap. Authentication uses
+process-local throttling (5 failed attempts per username and 20 attempts per
+client IP in 15 minutes); for multiworker deployments add a shared limiter at
+the proxy or use a shared store. State-changing API requests require a
+session-bound CSRF token from `GET /api/auth/csrf` in `X-CSRF-Token` and reject
+unapproved browser origins.
+# CSV timestamp timezones
+
+Select an IANA timezone (default `America/Santiago`) when uploading a CSV.
+Naive timestamps such as `Sep 14, 2026 3:02:15 PM` and ISO timestamps without
+an offset are interpreted in that zone and stored as UTC epoch milliseconds,
+including daylight-saving adjustments. Explicit offsets and numeric epochs are
+unchanged. Existing API clients omitting the timezone retain UTC interpretation;
+JSON uploads retain their existing behavior. Existing datasets are not changed:
+reimport them to apply a timezone.

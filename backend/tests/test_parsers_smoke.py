@@ -304,7 +304,7 @@ def test_falcon_network_link_config_registers_process_only():
 
 
 def test_falcon_critical_env_var_changed_maps_config_artifact():
-    """CriticalEnvironmentVariableChanged: name/value become a config artifact."""
+    """CriticalEnvironmentVariableChanged keeps the value in raw evidence only."""
     builder = GraphBuilder()
     parse_falcon_event(
         builder,
@@ -325,7 +325,9 @@ def test_falcon_critical_env_var_changed_maps_config_artifact():
 
     env = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "registry")
     assert env["data"]["label"] == "Env: LD_PRELOAD"
-    assert "/tmp/evil.so" in env["data"]["title"]
+    assert "/tmp/evil.so" not in env["data"]["title"]
+    assert any("/tmp/evil.so" in str(log) for logs in payload["raw_logs"].values()
+               for log in logs)
 
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Sets Env Var")
     assert edge["data"]["source"] == "2222@lnx1"
@@ -362,3 +364,57 @@ def test_falcon_network_listen_maps_local_endpoint():
     edge = next(e for e in payload["elements"]["edges"] if e["data"]["label"] == "Listens On")
     assert edge["data"]["source"] == "3333@lnx1"
     assert edge["data"]["target"] == endpoint["data"]["id"]
+
+
+def test_falcon_classified_module_load_targets_process_and_describes_module():
+    builder = GraphBuilder()
+    event = {
+        "#event_simpleName": "ClassifiedModuleLoad",
+        "ContextProcessId": "100", "TargetProcessId": "200",
+        "TargetImageFileName": r"C:\Windows\System32\rundll32.exe",
+        "ImageFileName": r"C:\Temp\payload.dll", "ComputerName": "WIN1",
+        "SHA256HashData": "abc123", "MD5HashData": "deadbeef",
+        "AuthenticodeHashData": "auth123", "ModuleSize": "4096",
+        "OriginalFilename": "original.dll", "PrimaryModule": "0",
+        "MappedFromUserMode": "1", "ModuleLoadTelemetryClassification": "0x12",
+        "ModuleCharacteristics": "8192", "SignInfoFlags": "0x40200",
+        "ZoneIdentifier": "3", "ImageSignatureLevel": "0x4",
+        "ImageSignatureType": 1, "HostUrl": "https://example.test",
+    }
+    parse_falcon_event(builder, event, "ClassifiedModuleLoad",
+                       "100", None, "200", None, "alice", "WIN1")
+    payload = builder.build_cytoscape_elements()
+    nodes = {n["data"]["id"]: n["data"] for n in payload["elements"]["nodes"]}
+    module = next(n for n in nodes.values() if n["group"] == "module")
+    assert "200@WIN1" in nodes
+    assert "100@WIN1" not in nodes
+    assert "rundll32.exe" in nodes["200@WIN1"]["label"]
+    assert module["label"] == "payload.dll"
+    for text in ("abc123", "deadbeef", "auth123", "original.dll", "4096",
+                 "RUNDLL32_TARGET", "UNUSUAL_EXTENSION", "FILE_DLL",
+                 "NO_SIGNATURE", "HAS_VALID_SIGNATURE", "INTERNET (3)",
+                 "AUTHENTICODE (0x4)", "EMBEDDED (1)", "https://example.test"):
+        assert text in module["title"]
+    edge = payload["elements"]["edges"][0]["data"]
+    assert (edge["source"], edge["target"], edge["label"]) == (
+        "200@WIN1", module["id"], "Loads Module")
+    assert builder.unmapped_events == []
+
+
+def test_falcon_classified_module_load_reuses_module_and_handles_missing_fields():
+    builder = GraphBuilder()
+    for host, pid in (("WIN1", "200"), ("WIN2", "200")):
+        parse_falcon_event(builder, {
+            "TargetProcessId": pid, "ImageFileName": r"C:\Temp\payload.dll",
+            "SignInfoFlags": "unexpected", "ComputerName": host,
+        }, "ClassifiedModuleLoad", None, None, pid, None, None, host)
+    parse_falcon_event(builder, {"TargetProcessId": "300"},
+                       "ClassifiedModuleLoad", None, None, "300", None, None, "WIN1")
+    payload = builder.build_cytoscape_elements()
+    nodes = {n["data"]["id"]: n["data"] for n in payload["elements"]["nodes"]}
+    modules = [n for n in nodes.values() if n["group"] == "module"]
+    assert len(modules) == 1
+    assert "Signature Flags: unexpected" in modules[0]["title"]
+    assert {e["data"]["source"] for e in payload["elements"]["edges"]} == {
+        "200@WIN1", "200@WIN2"}
+    assert "300@WIN1" in nodes
