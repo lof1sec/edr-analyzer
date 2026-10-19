@@ -4,14 +4,15 @@ import secrets
 from contextlib import asynccontextmanager
 
 from alembic.config import Config
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 from starlette.middleware.sessions import SessionMiddleware
 
 from alembic import command
 from app import bootstrap
-from app.routers import auth, datasets, graph
+from app.routers import auth, csrf, datasets, graph
 
 ALEMBIC_INI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
 
@@ -74,6 +75,19 @@ app = FastAPI(title="EDR Logs Analysis API", lifespan=lifespan)
 
 # Session middleware is added before CORS so CORS stays the outermost layer and
 # can answer preflight requests for credentialed (cookie) calls.
+
+
+@app.middleware("http")
+async def csrf_guard(request: Request, call_next):
+    try:
+        csrf.validate(request, get_allowed_origins())
+    except Exception as exc:
+        from fastapi import HTTPException
+
+        if isinstance(exc, HTTPException):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        raise
+    return await call_next(request)
 app.add_middleware(
     SessionMiddleware,
     secret_key=get_secret_key(),

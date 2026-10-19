@@ -14,6 +14,7 @@ import { api } from '../api/client';
 import ChangePasswordModal from './ChangePasswordModal';
 import EmptyState from './EmptyState';
 import { useToast } from '../hooks/useToast';
+import { createUploadForm } from '../utils/uploadForm';
 
 const THEME_META = {
   light: { Icon: Sun, label: 'Light' },
@@ -36,6 +37,7 @@ export default function Sidebar({
   onCycleTheme,
 }) {
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [uploadTimezone, setUploadTimezone] = useState('America/Santiago');
   const toast = useToast();
   const { Icon: ThemeIcon, label: themeLabel } = THEME_META[theme] || THEME_META.system;
 
@@ -44,8 +46,7 @@ export default function Sidebar({
     if (!file) return;
 
     setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
+    const formData = createUploadForm(file, uploadTimezone);
 
     try {
       const result = await api.uploadDataset(formData);
@@ -144,21 +145,37 @@ export default function Sidebar({
       </div>
 
       <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+        <label htmlFor="upload-timezone" className="block text-sm font-medium mb-1">CSV timestamp timezone</label>
+        <input
+          id="upload-timezone"
+          type="text"
+          list="upload-timezone-options"
+          value={uploadTimezone}
+          onChange={(event) => setUploadTimezone(event.target.value)}
+          disabled={isUploading}
+          className="w-full mb-2 rounded-md border border-slate-300 bg-white text-slate-900 p-2 text-sm dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+        />
+        <datalist id="upload-timezone-options">
+          {['America/Santiago', 'UTC', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Madrid', 'Asia/Tokyo'].map((zone) => (
+            <option key={zone} value={zone} />
+          ))}
+        </datalist>
+        <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Applies to timestamps without an offset. Existing datasets require reimporting.</p>
         <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-700 dark:border-slate-600 dark:hover:bg-slate-600 transition-colors">
           <div className="flex flex-col items-center justify-center pt-5 pb-6">
             <Upload className="w-8 h-8 mb-3 text-slate-500 dark:text-slate-400" aria-hidden="true" />
             <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
-              <span className="font-semibold">Click to upload CSV</span>
+              <span className="font-semibold">Click to upload CSV/JSON</span>
             </p>
             {isUploading && <p className="text-xs text-blue-500 font-bold">Uploading &amp; parsing…</p>}
           </div>
           <input
             type="file"
             className="hidden"
-            accept=".csv"
+            accept=".csv,.json,.jsonl"
             onChange={handleFileUpload}
             disabled={isUploading}
-            aria-label="Upload a CSV log export"
+            aria-label="Upload a CSV, JSON or JSONL log export"
           />
         </label>
       </div>

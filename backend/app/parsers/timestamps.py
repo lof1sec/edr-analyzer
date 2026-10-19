@@ -8,6 +8,7 @@ becomes ``None``; the timeline then falls back to insertion order for that event
 import math
 import re
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 FALCON_TIME_FIELDS = ("timestamp", "@timestamp")
 DEFENDER_TIME_FIELDS = (
@@ -24,6 +25,7 @@ DEFENDER_TIME_FIELDS = (
 _CANDIDATE_FIELDS = DEFENDER_TIME_FIELDS + FALCON_TIME_FIELDS
 
 _NUMERIC = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_DISPLAY_TIME = "%b %d, %Y %I:%M:%S %p"
 
 # Epoch values above this (seconds / 1000 = year ~5138) are assumed to already
 # be milliseconds. Keeps both common epoch units working.
@@ -34,7 +36,7 @@ _MS_THRESHOLD = 1e11
 _MAX_EPOCH_MS = 253_402_300_799_999
 
 
-def extract_timestamp(event) -> int | None:
+def extract_timestamp(event, naive_timezone: ZoneInfo | None = None) -> int | None:
     """Return the event time as epoch milliseconds, or ``None`` if unknown."""
     if not isinstance(event, dict):
         return None
@@ -42,13 +44,13 @@ def extract_timestamp(event) -> int | None:
         value = event.get(field)
         if value is None:
             continue
-        parsed = _parse_timestamp(value)
+        parsed = _parse_timestamp(value, naive_timezone)
         if parsed is not None:
             return parsed
     return None
 
 
-def _parse_timestamp(value) -> int | None:
+def _parse_timestamp(value, naive_timezone: ZoneInfo | None = None) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
@@ -73,10 +75,16 @@ def _parse_timestamp(value) -> int | None:
         try:
             parsed = datetime.fromisoformat(iso)
         except ValueError:
-            return None
+            try:
+                parsed = datetime.strptime(text, _DISPLAY_TIME)
+            except ValueError:
+                return None
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return int(parsed.timestamp() * 1000)
+            parsed = parsed.replace(tzinfo=naive_timezone or UTC)
+        try:
+            return int(parsed.timestamp() * 1000)
+        except (OverflowError, OSError, ValueError):
+            return None
     return None
 
 

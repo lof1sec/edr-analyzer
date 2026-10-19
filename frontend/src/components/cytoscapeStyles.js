@@ -3,12 +3,17 @@
 // Single source of truth for node groups: the Cytoscape stylesheet below and
 // the legend in GraphView are both derived from it, so colors cannot drift.
 export const NODE_GROUPS = [
+  { group: 'event', label: 'Defender event', shape: 'ellipse', color: '#164e63', border: '#22d3ee' },
+  { group: 'host', label: 'Host', shape: 'round-rectangle', color: '#1e3a5f', border: '#60a5fa' },
+  { group: 'account', label: 'Account', shape: 'ellipse', color: '#4c1d95', border: '#a78bfa' },
+  { group: 'policy', label: 'Policy', shape: 'diamond', color: '#3b0764', border: '#c084fc' },
   { group: 'process', label: 'Process', shape: 'round-rectangle', color: '#4d0000', border: '#ff4d4d' },
   { group: 'file', label: 'File', shape: 'rectangle', color: '#00264d', border: '#4da6ff' },
   { group: 'module', label: 'Module', shape: 'hexagon', color: '#4d0099', border: '#b366ff' },
   { group: 'registry', label: 'Registry', shape: 'rectangle', color: '#804000', border: '#ff9933' },
   { group: 'network', label: 'Network', shape: 'rectangle', color: '#003333', border: '#00ffff' },
   { group: 'commandline', label: 'Command line', shape: 'rectangle', color: '#332b00', border: '#ffcc00', borderWidth: 1 },
+  { group: 'shell-command', label: 'Shell command', shape: 'rectangle', color: '#064e3b', border: '#34d399' },
   { group: 'powershell', label: 'PowerShell', shape: 'rectangle', color: '#4d2e00', border: '#ff9900', borderWidth: 1 },
   // PowerShell command / command history artifacts (darker orange).
   { group: 'commandline-exec', label: 'Command exec', shape: 'rectangle', color: '#431407', border: '#c2410c', borderWidth: 1 },
@@ -79,6 +84,12 @@ export const stylesheet = () => [
     }
   },
   {
+    selector: '.defender-report-muted',
+    style: {
+      'display': 'none'
+    }
+  },
+  {
     // Spotlight: everything outside the selected element's neighbourhood.
     selector: '.dimmed',
     style: {
@@ -122,6 +133,7 @@ export const stylesheet = () => [
     selector: 'edge.playback-active',
     style: {
       'display': 'element',
+      'visibility': 'visible',
       'opacity': 1,
       'width': 6,
       'line-color': '#38bdf8',

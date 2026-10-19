@@ -3,8 +3,9 @@ import csv
 import io
 import json
 import os
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,23 @@ MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "200"))
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024  # 1 MiB
 INSERT_BATCH_SIZE = 1000
+MAX_JSON_EVENT_MB = 8
+MAX_JSON_EVENT_BYTES = MAX_JSON_EVENT_MB * 1024 * 1024
+MAX_JSON_DEPTH = 64
+MAX_CSV_FIELD_CHARS = 1024 * 1024
+
+
+def _validate_json_event(row):
+    pending = [(row, 1)]
+    while pending:
+        value, depth = pending.pop()
+        if isinstance(value, (dict, list)):
+            if depth > MAX_JSON_DEPTH:
+                raise HTTPException(400, "JSON event exceeds maximum nesting depth")
+            children = value.values() if isinstance(value, dict) else value
+            pending.extend((child, depth + 1) for child in children if isinstance(child, (dict, list)))
+    if len(json.dumps(row, ensure_ascii=False).encode("utf-8")) > MAX_JSON_EVENT_BYTES:
+        raise HTTPException(413, "JSON event exceeds maximum size")
 
 
 def _file_too_large() -> HTTPException:
@@ -76,11 +94,16 @@ def _detect_encoding_and_check_size(file_obj) -> str:
     return encoding
 
 
-def _iter_clean_lines(file_obj, encoding):
+def _iter_clean_lines(file_obj, encoding, max_chars=None):
     """Yield decoded lines with NUL bytes removed, without buffering the file."""
     stream = io.TextIOWrapper(file_obj, encoding=encoding, newline="")
     try:
-        for line in stream:
+        while True:
+            line = stream.readline(max_chars + 1) if max_chars is not None else stream.readline()
+            if not line:
+                break
+            if max_chars is not None and len(line) > max_chars:
+                raise HTTPException(413, "Upload record exceeds maximum size")
             if "\x00" in line:
                 line = line.replace("\x00", "")
             yield line
@@ -93,6 +116,45 @@ def _iter_clean_lines(file_obj, encoding):
             pass
 
 
+def _remove_json_nuls(event: dict) -> None:
+    """Strip decoded NUL characters from a JSON event before storing it as JSONB.
+
+    JSON escapes such as ``\\u0000`` survive the input-stream cleanup and are
+    decoded into literal NULs by ``json.loads``. PostgreSQL rejects these even
+    inside nested strings or keys. Walk one event at a time, iteratively, so a
+    large upload never has to be materialised or recursively copied.
+    """
+    pending = [event]
+    while pending:
+        container = pending.pop()
+        if isinstance(container, list):
+            for index, value in enumerate(container):
+                if isinstance(value, str):
+                    if "\x00" in value:
+                        container[index] = value.replace("\x00", "")
+                elif isinstance(value, (dict, list)):
+                    pending.append(value)
+            continue
+
+        renamed = []
+        for key, value in container.items():
+            if isinstance(value, str):
+                if "\x00" in value:
+                    container[key] = value.replace("\x00", "")
+            elif isinstance(value, (dict, list)):
+                pending.append(value)
+            if "\x00" in key:
+                renamed.append((key, key.replace("\x00", "")))
+
+        for old_key, new_key in renamed:
+            if new_key in container:
+                raise HTTPException(
+                    status_code=400,
+                    detail="JSON keys collide after removing NUL characters",
+                )
+            container[new_key] = container.pop(old_key)
+
+
 def _parse_csv_rows(file_obj, encoding):
     """Yield ``(event_type, row)`` tuples for a CSV export.
 
@@ -100,9 +162,13 @@ def _parse_csv_rows(file_obj, encoding):
     (``ActionType`` for Defender, ``#event_simpleName`` for Falcon), so the
     vendor no longer depends on the file extension.
     """
-    reader = csv.DictReader(_iter_clean_lines(file_obj, encoding))
+    # csv.field_size_limit is interpreter-global; a separate per-row check below
+    # enforces our own limit without changing global parser settings.
+    reader = csv.DictReader(_iter_clean_lines(file_obj, encoding, MAX_JSON_EVENT_BYTES))
     try:
         for row in reader:
+            if any(len(value) > MAX_CSV_FIELD_CHARS for value in row.values() if isinstance(value, str)):
+                raise HTTPException(413, "CSV field exceeds maximum size")
             yield extract_event_type(row), row
     except csv.Error:
         # e.g. a field larger than csv.field_size_limit: a malformed export,
@@ -136,6 +202,8 @@ def _iter_json_array(file_obj, encoding):
     decoder = json.JSONDecoder()
     buffer = ""
     eof = False
+    need_separator = False
+    after_comma = False
 
     def fill():
         nonlocal buffer, eof
@@ -168,18 +236,38 @@ def _iter_json_array(file_obj, encoding):
                 fill()
                 continue
             if buffer[0] == "]":
+                if after_comma:
+                    raise json.JSONDecodeError("Trailing comma", buffer, 0)
+                if buffer[1:].strip() or any(
+                    not character.isspace()
+                    for chunk in iter(lambda: stream.read(4096), "")
+                    for character in chunk
+                ):
+                    raise json.JSONDecodeError("Trailing data", buffer, 1)
                 return
             if buffer[0] == ",":
+                if not need_separator:
+                    raise json.JSONDecodeError("Unexpected comma", buffer, 0)
                 buffer = buffer[1:]
+                need_separator = False
+                after_comma = True
                 continue
+            if need_separator:
+                raise json.JSONDecodeError("Missing comma", buffer, 0)
             try:
                 value, end = decoder.raw_decode(buffer)
             except json.JSONDecodeError as exc:
                 if eof:
                     raise exc
+                if len(buffer.encode("utf-8")) > MAX_JSON_EVENT_BYTES:
+                    raise HTTPException(413, "JSON event exceeds maximum size") from None
                 fill()
                 continue
+            if len(buffer[:end].encode("utf-8")) > MAX_JSON_EVENT_BYTES:
+                raise HTTPException(413, "JSON event exceeds maximum size")
             buffer = buffer[end:]
+            need_separator = True
+            after_comma = False
             yield value
     finally:
         try:
@@ -195,6 +283,8 @@ def _parse_json_array(file_obj, encoding):
     try:
         for row in _iter_json_array(file_obj, encoding):
             if isinstance(row, dict):
+                _validate_json_event(row)
+                _remove_json_nuls(row)
                 yield extract_event_type(row), row
     except (json.JSONDecodeError, RecursionError):
         raise HTTPException(status_code=400, detail="Failed to parse JSON file") from None
@@ -203,7 +293,10 @@ def _parse_json_array(file_obj, encoding):
 def _parse_json_document(file_obj, encoding):
     """Parse the whole upload as a single JSON document (a lone object)."""
     file_obj.seek(0)
-    raw = file_obj.read().decode(encoding, errors="replace").replace("\x00", "")
+    raw_bytes = file_obj.read(MAX_JSON_EVENT_BYTES + 1)
+    if len(raw_bytes) > MAX_JSON_EVENT_BYTES:
+        raise HTTPException(413, "JSON event exceeds maximum size")
+    raw = raw_bytes.decode(encoding, errors="replace").replace("\x00", "")
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, RecursionError):
@@ -211,6 +304,8 @@ def _parse_json_document(file_obj, encoding):
 
     # Accept a single event object (arrays never reach this fallback).
     if isinstance(data, dict):
+        _validate_json_event(data)
+        _remove_json_nuls(data)
         yield extract_event_type(data), data
 
 
@@ -221,7 +316,9 @@ def _parse_json_rows(file_obj, encoding):
         return
 
     parsed_any = False
-    for line in _iter_clean_lines(file_obj, encoding):
+    for line in _iter_clean_lines(file_obj, encoding, MAX_JSON_EVENT_BYTES):
+        if len(line.encode("utf-8")) > MAX_JSON_EVENT_BYTES:
+            raise HTTPException(413, "JSON event exceeds maximum size")
         line = line.strip()
         if not line or line in ("[", "]", "{", "}", "},"):
             continue
@@ -232,6 +329,8 @@ def _parse_json_rows(file_obj, encoding):
         except (json.JSONDecodeError, RecursionError):
             continue
         if isinstance(row, dict):
+            _validate_json_event(row)
+            _remove_json_nuls(row)
             parsed_any = True
             yield extract_event_type(row), row
 
@@ -249,13 +348,24 @@ def _flush_batch(db: Session, batch: list) -> None:
 
 
 @router.post("/upload")
-def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_file(
+    file: UploadFile = File(...),
+    timezone: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
     filename = (file.filename or "").lower()
     is_csv = filename.endswith(".csv")
     is_json = filename.endswith((".json", ".jsonl"))
 
     if not (is_csv or is_json):
         raise HTTPException(status_code=400, detail="Only CSV, JSON, or JSONL files are allowed")
+
+    naive_timezone = None
+    if timezone is not None:
+        try:
+            naive_timezone = ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid IANA timezone") from None
 
     # Cheap pre-check when the multipart parser reported the size.
     reported_size = getattr(file, "size", None)
@@ -282,7 +392,7 @@ def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
             batch.append(LogEvent(
                 dataset_id=dataset.id,
                 event_type=event_type,
-                event_time=extract_timestamp(row),
+                event_time=extract_timestamp(row, naive_timezone if is_csv else None),
                 data=row,
             ))
             total_events += 1

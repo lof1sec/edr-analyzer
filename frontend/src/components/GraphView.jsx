@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs';
 import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye, Clock } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
+import { hiddenDefenderElements } from './defenderEdges';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from './EmptyState';
@@ -207,6 +208,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
 
   // Manual Hiding State
   const [manuallyHidden, setManuallyHidden] = useState(new Set());
+  const [showDefenderReports, setShowDefenderReports] = useState(false);
 
   // Right Pane Toggle State
   const [isRightPaneOpen, setIsRightPaneOpen] = useState(true);
@@ -250,6 +252,11 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
     }
     return map;
   }, [elements]);
+  const suppressedDefenderIds = useMemo(() => hiddenDefenderElements(elements, {
+    show: showDefenderReports,
+    selectedId: selectedNode?.id,
+    playbackId: playbackElementId,
+  }), [elements, showDefenderReports, selectedNode?.id, playbackElementId]);
 
   useEffect(() => {
     activeFocusRef.current = playbackElementId;
@@ -545,8 +552,13 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
           cy.elements().not(focusElements).addClass('dimmed');
         }
       }
+      // Presentation only: do not remove elements or alter layout inputs.
+      cy.elements().forEach(el => {
+        if (suppressedDefenderIds.has(el.id())) el.addClass('defender-report-muted');
+        else el.removeClass('defender-report-muted');
+      });
     });
-  }, [matchedIds, eventTypes, users, pids, elements, manuallyHidden, selectedNode, focusDepth]);
+  }, [matchedIds, eventTypes, users, pids, elements, manuallyHidden, selectedNode, focusDepth, suppressedDefenderIds]);
 
   // Fetch raw evidence for the selected element on demand and cache it. The
   // previous element's logs are cleared from the tap handlers, not here, so
@@ -610,7 +622,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
   };
 
   const fitGraph = () => {
-      if(cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden'), 30);
+      if (cyRef.current) cyRef.current.fit(cyRef.current.elements().not('.hidden, .defender-report-muted'), 30);
   };
 
   const zoomBy = (factor) => {
@@ -1083,6 +1095,15 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
                 <option value="tree">Layout: Tree</option>
                 <option value="centered">Layout: Centered</option>
             </select>
+            <button
+                type="button"
+                onClick={() => setShowDefenderReports(value => !value)}
+                aria-pressed={showDefenderReports}
+                className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                title="Show or hide Defender event observations and their context (visual only)"
+            >
+                Defender event observations: {showDefenderReports ? 'Shown' : 'Hidden'}
+            </button>
             <select
                 value={focusDepth}
                 onChange={(e) => setFocusDepth(Number(e.target.value))}

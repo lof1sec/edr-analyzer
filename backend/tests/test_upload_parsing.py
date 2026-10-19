@@ -81,6 +81,28 @@ def test_json_array_latin1():
     assert row["Data"] == "caf\u00e9"
 
 
+@pytest.mark.parametrize("data", [
+    b'{"#event_simpleName":"NewScriptWritten","ScriptContent":"{\\u0000let x = 1;",'
+    b'"nested":{"a\\u0000b":["one\\u0000two",{"value":"caf\\u00e9\\u0000"}]}}\n',
+    b'[{"#event_simpleName":"NewScriptWritten","ScriptContent":"{\\u0000let x = 1;",'
+    b'"nested":{"a\\u0000b":["one\\u0000two",{"value":"caf\\u00e9\\u0000"}]}}]',
+    b'{\n"#event_simpleName":"NewScriptWritten",\n"ScriptContent":"{\\u0000let x = 1;",\n'
+    b'"nested":{"a\\u0000b":["one\\u0000two",{"value":"caf\\u00e9\\u0000"}]}\n}',
+])
+def test_json_nul_escapes_are_removed_from_nested_values_and_keys(data):
+    event_type, row = parse(data, "json")[0]
+    assert event_type == "NewScriptWritten"
+    assert row["ScriptContent"] == "{let x = 1;"
+    assert row["nested"]["ab"] == ["onetwo", {"value": "caf\u00e9"}]
+    assert "\x00" not in str(row)
+
+
+def test_json_key_collision_after_nul_removal_is_a_client_error():
+    with pytest.raises(HTTPException) as excinfo:
+        parse(b'{"a\\u0000b":1,"ab":2}', "json")
+    assert excinfo.value.status_code == 400
+
+
 def test_truncated_json_array_raises_400():
     with pytest.raises(HTTPException) as excinfo:
         parse(b'[{"ActionType": "ProcessCreated"}', "json")

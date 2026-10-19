@@ -4,9 +4,11 @@ The shared ``client`` / ``admin_client`` fixtures (and the in-memory sqlite
 engine) live in ``conftest.py``.
 """
 import io
+from datetime import UTC, datetime
 
 import pytest
 
+from app.models import LogEvent
 from app.routers import datasets as datasets_router
 
 
@@ -15,6 +17,23 @@ def _upload(client, content, name, content_type="text/csv"):
         "/api/datasets/upload",
         files={"file": (name, io.BytesIO(content), content_type)},
     )
+
+
+def test_upload_timezone_normalizes_csv_and_rejects_invalid_zone(admin_client, db_session):
+    csv = b"ActionType,Timestamp\nProcessCreated,\"Sep 14, 2026 3:02:15 PM\"\n"
+    endpoint = "/api/datasets/upload"
+    files = {"file": ("times.csv", io.BytesIO(csv), "text/csv")}
+    response = admin_client.post(endpoint, files=files, data={"timezone": "America/Santiago"})
+    assert response.status_code == 200
+    event = db_session.query(LogEvent).filter_by(dataset_id=response.json()["dataset_id"]).one()
+    assert event.event_time == int(datetime(2026, 9, 14, 18, 2, 15, tzinfo=UTC).timestamp() * 1000)
+
+    response = admin_client.post(
+        endpoint,
+        files={"file": ("times.csv", io.BytesIO(csv), "text/csv")},
+        data={"timezone": "Invalid/Timezone"},
+    )
+    assert response.status_code == 400
 
 
 def test_upload_list_graph_search_element_logs_and_delete_flow(admin_client):
@@ -89,6 +108,23 @@ def test_upload_rolls_back_all_batches_on_unexpected_error(admin_client, monkeyp
     with pytest.raises(RuntimeError, match="unexpected parser failure"):
         _upload(admin_client, data, "interrupted.csv")
     assert admin_client.get("/api/datasets/").json() == []
+
+
+def test_upload_stores_json_escaped_nuls_without_postgresql_incompatible_values(
+    admin_client, db_session,
+):
+    content = (
+        b'{"#event_simpleName":"NewScriptWritten","timestamp":"1791477927898",'
+        b'"ScriptContent":"{\\u0000Write-Host \\"ok\\"",'
+        b'"nested":{"item\\u0000name":["a\\u0000b",42]}}\n'
+    )
+    response = _upload(admin_client, content, "nul.jsonl", "application/jsonl")
+    assert response.status_code == 200
+    log = db_session.query(LogEvent).filter_by(dataset_id=response.json()["dataset_id"]).one()
+    assert log.event_type == "NewScriptWritten"
+    assert log.data["ScriptContent"] == '{Write-Host "ok"'
+    assert log.data["nested"]["itemname"] == ["ab", 42]
+    assert "\x00" not in str(log.data)
 
 
 def _upload_defender_rows(client, rows, name="events.csv"):

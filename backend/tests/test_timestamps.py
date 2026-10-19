@@ -1,5 +1,6 @@
 """Unit tests for the timestamp normaliser used by the timeline."""
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from app.parsers.timestamps import extract_timestamp, format_timestamp
 
@@ -32,6 +33,23 @@ def test_iso_string_with_z():
 def test_iso_string_without_timezone_is_utc():
     expected = _iso_ms(2026, 10, 5, 12, 0, 0)
     assert extract_timestamp({"Timestamp": "2026-10-05T12:00:00"}) == expected
+
+
+def test_csv_wall_time_uses_santiago_dst_and_aware_times_remain_absolute():
+    zone = ZoneInfo("America/Santiago")
+    assert extract_timestamp({"Timestamp": "Sep 14, 2026 3:02:15 PM"}, zone) == _iso_ms(
+        2026, 9, 14, 18, 2, 15
+    )
+    assert extract_timestamp({"Timestamp": "Jun 14, 2026 3:02:15 PM"}, zone) == _iso_ms(
+        2026, 6, 14, 19, 2, 15
+    )
+    assert extract_timestamp({"Timestamp": "2026-09-14T15:02:15"}, zone) == _iso_ms(
+        2026, 9, 14, 18, 2, 15
+    )
+    assert extract_timestamp({"Timestamp": "2026-09-14T15:02:15Z"}, zone) == _iso_ms(
+        2026, 9, 14, 15, 2, 15
+    )
+    assert extract_timestamp({"timestamp": 1700000000}, zone) == 1700000000000
 
 
 def test_defender_field_is_preferred_when_present():

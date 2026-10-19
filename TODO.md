@@ -579,7 +579,7 @@ migration that invalidates layouts saved with the old ids.
       the object; consider a strict mode or count malformed lines.
 - [ ] Per-process graph cache (`graph_cache`): it is not shared with
       `--workers N`; documented, revisit if it scales.
-- [ ] No CSRF token (mitigated by the CORS allowlist + `SameSite=lax` + httpOnly).
+- [x] Session-bound CSRF token on all mutating API routes, with Origin checks.
 
 ### Testing
 
@@ -590,6 +590,20 @@ migration that invalidates layouts saved with the old ids.
 
 ## Review improvements (all implemented)
 
+- [x] **Map nine additional Falcon event types**: `InjectedThread`, `DllInjection`,
+      `ProcessInjection`, `NewExecutableRenamed`, `ReflectiveDotnetModuleLoad`,
+      `ScriptControlDetectInfo`, `SensitiveWmiQuery`, `CreateService` and
+      `RemoteCommandResponse`. Preserve UPID-based process relationships, attach
+      process-less command responses to the host, keep full script/output content
+      in on-demand raw evidence, and cover graph/timeline mapping with tests.
+- [x] **Map Falcon `ClassifiedModuleLoad`**: connect the loaded module to its
+      target process, decode module classification, characteristics, signature
+      and zone metadata, and include the event in graph-backed timeline entries.
+      Cover missing fields, cross-host reuse and timeline mapping with tests.
+- [x] **Handle escaped NULs in JSON exports**: remove decoded NULs (`U+0000`) from
+      nested values and keys before JSONB insertion, reject colliding keys with
+      HTTP 400, and cover JSONL, JSON arrays, single objects and HTTP uploads
+      with regression tests. Verified clean data against PostgreSQL JSONB.
 - [x] **Enforce the initial graph element cap even for dense process backbones**:
       account for process-process edges before admitting each process; test
       parallel edges and verify pagination recovers them all.
@@ -641,7 +655,22 @@ migration that invalidates layouts saved with the old ids.
 - [x] **Parser fuzzing** (Hypothesis) — done (eponymous section above).
 - [ ] **`/api/health`** and basic metrics.
 - [ ] **Audit log** of actions (login, upload, delete).
-- [ ] (Optional) **Rate limiting** on login and security headers.
+- [x] **Process-local rate limiting** on login and setup (username and IP).
+- [ ] **Shared rate limiting** for multiworker deployments; security headers.
+
+## Security and ingestion hardening
+
+- [x] Bound JSON event size (8 MiB) and depth (64), CSV field size (1 MiB),
+      and preserve streamed upload/transaction semantics.
+- [x] Bound graph artifact titles to 8192 characters; keep raw evidence intact.
+- [x] Apply session-bound CSRF checks and origin validation to mutations,
+      including authentication, upload, delete and layout writes.
+- [x] Throttle login/setup per client IP (20 attempts) and username (5 failures)
+      over 15 minutes with HTTP 429 and `Retry-After`; ignore untrusted XFF.
+- [x] Leave example secrets blank (database startup requires a password) and bind
+      the Compose development database to localhost only.
+- [ ] Use a shared rate limiter before running multiple backend workers; local
+      counters cannot protect aggregate traffic across processes.
 - [ ] (Roadmap) **Multi-user** with per-user or shared datasets.
 
 ---

@@ -3,6 +3,15 @@ import hashlib
 import json
 import os
 
+MAX_ARTIFACT_TITLE_CHARS = 8192
+
+
+def _bounded_title(text):
+    text = str(text)
+    if len(text) <= MAX_ARTIFACT_TITLE_CHARS:
+        return text
+    return text[:MAX_ARTIFACT_TITLE_CHARS - 1] + "…"
+
 
 def get_additional_fields_dict(event_data):
     fields = event_data.get("AdditionalFields")
@@ -301,7 +310,7 @@ class GraphBuilder:
                 "id": node_id,
                 "label": label,
                 "group": group,
-                "title": new_details,
+                "title": _bounded_title(new_details),
                 "raw_logs": [],
                 "raw_logs_total": 0,
             }
@@ -310,10 +319,10 @@ class GraphBuilder:
             current_title = self.nodes_dict[node_id].get("title", "")
             _append_raw_log(self.nodes_dict[node_id], raw_event, self.current_event_time)
 
-            if new_details not in current_title:
+            if len(current_title) < MAX_ARTIFACT_TITLE_CHARS and new_details not in current_title:
                 separator = "\n\n" + "="*40 + "\n\n"
                 new_title = f"{current_title}{separator}{new_details}" if current_title else new_details
-                self.nodes_dict[node_id]["title"] = new_title
+                self.nodes_dict[node_id]["title"] = _bounded_title(new_title)
 
     def add_edge(self, source, target, label, color, event_simplename, dashed=False, raw_event=None):
         source_str = str(source)
@@ -381,7 +390,8 @@ class GraphBuilder:
                 edge["target"]
                 for edge in hub_edges
                 if edge["target"] not in collapsed_nodes
-                and self.nodes_dict.get(edge["target"], {}).get("group") != "process"
+                and self.nodes_dict.get(edge["target"], {}).get("group") not in {"process", "event", "host"}
+                and edge["target"] not in children
                 and parents.get(edge["target"]) == {hub_id}
             ]
             # A single artifact can be the target of several edges from the same
