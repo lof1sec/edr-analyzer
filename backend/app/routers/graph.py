@@ -6,7 +6,7 @@ from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Dataset, GraphLayout, LogEvent
+from app.models import Dataset, GraphLayout, GraphViewState, LogEvent
 from app.parsers.builder import GraphBuilder
 from app.parsers.defender import parse_defender_event
 from app.parsers.events import describe_event
@@ -15,7 +15,7 @@ from app.parsers.timestamps import format_timestamp
 from app.parsers.vendor import DEFENDER, FALCON, get_vendor
 from app.routers import graph_cache
 from app.routers.auth import require_user
-from app.schemas import LayoutRequest
+from app.schemas import LayoutRequest, ViewStateRequest
 
 router = APIRouter(
     prefix="/api/graph",
@@ -305,6 +305,7 @@ def generate_graph(
     )
     return {
         "elements": {"nodes": nodes, "edges": edges},
+        "event_types": sorted({event_type for _, event_type in payload["event_times"].values()}),
         "unmapped_events": dict(Counter(payload["unmapped_events"])),
         "truncated": bool(omitted_nodes or omitted_edges),
         "total_nodes": len(payload["elements"]["nodes"]),
@@ -721,6 +722,35 @@ def get_neighbors(
         "edges": selected_edges,
         "truncated": truncated,
     }
+
+
+@router.get("/{dataset_id}/view")
+def get_view(dataset_id: int, db: Session = Depends(get_db)):
+    if not db.get(Dataset, dataset_id):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    saved = db.get(GraphViewState, dataset_id)
+    return {"view": saved.state if saved else None}
+
+
+@router.put("/{dataset_id}/view")
+def save_view(dataset_id: int, body: ViewStateRequest, db: Session = Depends(get_db)):
+    if not db.get(Dataset, dataset_id):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    saved = db.get(GraphViewState, dataset_id)
+    if saved:
+        saved.state = body.model_dump()
+    else:
+        db.add(GraphViewState(dataset_id=dataset_id, state=body.model_dump()))
+    db.commit()
+    return {"view": body.model_dump()}
+
+
+@router.delete("/{dataset_id}/view", status_code=204)
+def delete_view(dataset_id: int, db: Session = Depends(get_db)):
+    if not db.get(Dataset, dataset_id):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    db.query(GraphViewState).filter(GraphViewState.dataset_id == dataset_id).delete()
+    db.commit()
 
 
 @router.get("/{dataset_id}/layout")

@@ -47,6 +47,17 @@ def test_process_table_creates_parent_child_relationship():
     assert builder.event_elements[1]["edges"]
 
 
+def test_invalid_certificate_dates_do_not_block_process_spawn():
+    event = {"ActionType": "ProcessCreated", "InitiatingProcessId": 1, "ProcessId": 2,
+             "DeviceName": "host", "Type": "DeviceProcessEvents",
+             "CertificateCreationTime": "Invalid date", "CertificateExpirationTime": "Invalid date",
+             "CertificateCountersignatureTime": "Invalid date"}
+    builder = parse(event)
+    assert [(edge["source"], edge["target"]) for edge in builder.edges_list
+            if edge["label"] == "Spawns"] == [("1@host", "2@host")]
+    assert builder.nodes_dict["1@host"]["raw_logs"][0] == event
+
+
 def test_process_signatures_and_shared_initiator_identifier():
     assert classify_defender_table({"ActionType": "ProcessCreated", "ProcessUniqueId": "abc"}) == "DeviceProcessEvents"
     assert classify_defender_table({"ActionType": "ProcessCreated", "ProcessIntegrityLevel": "High"}) == "DeviceProcessEvents"

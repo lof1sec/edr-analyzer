@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Network } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
@@ -30,6 +30,10 @@ function App() {
   const [playbackReadyId, setPlaybackReadyId] = useState(null);
   const [playbackError, setPlaybackError] = useState(null);
   const [graphFilters, setGraphFilters] = useState(emptyGraphFilters);
+  const [savedHidden, setSavedHidden] = useState([]);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewError, setViewError] = useState('');
+  const selectionGeneration = useRef(0);
 
   const handleSelectTimelineElement = useCallback((entry) => {
     setPlaybackEntry(previous => entry?.focus_element_id
@@ -43,8 +47,27 @@ function App() {
   const handlePlaybackError = useCallback((message) => setPlaybackError(message), []);
 
   const selectDataset = useCallback((id) => {
+    const generation = ++selectionGeneration.current;
     setActiveDataset(id);
     setGraphFilters(emptyGraphFilters());
+    setSavedHidden([]);
+    setViewError('');
+    setViewLoading(Boolean(id));
+    if (id) api.getView(id).then(({ view: saved }) => {
+      if (selectionGeneration.current !== generation) return;
+      if (saved) {
+        setGraphFilters({ rangeFrom: saved.rangeFrom, rangeTo: saved.rangeTo,
+          globalSearch: saved.globalSearch,
+          eventTypes: Object.fromEntries(saved.hiddenEventTypes.map(value => [value, false])),
+          users: Object.fromEntries(saved.hiddenUsers.map(value => [value, false])),
+          pids: Object.fromEntries(saved.hiddenPids.map(value => [value, false])) });
+        setSavedHidden(saved.hiddenElements);
+      }
+    }).catch(err => {
+      if (selectionGeneration.current === generation) setViewError(`Could not restore saved view: ${err.message}`);
+    }).finally(() => {
+      if (selectionGeneration.current === generation) setViewLoading(false);
+    });
     setPlaybackEntry(null);
     setPlaybackReadyId(null);
     setPlaybackError(null);
@@ -90,6 +113,7 @@ function App() {
       console.error(err);
     }
     setDatasets([]);
+    selectionGeneration.current += 1;
     setActiveDataset(null);
     setPlaybackEntry(null);
     setPlaybackReadyId(null);
@@ -155,15 +179,17 @@ function App() {
         </div>
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
           <div className="flex-1 min-h-0 min-w-0">
-            <GraphView
+            {viewLoading ? <div className="p-4 text-slate-500" role="status">Loading saved view…</div> : <GraphView
               key={activeDataset}
               datasetId={activeDataset}
               graphFilters={graphFilters}
               setGraphFilters={setGraphFilters}
+              initialHidden={savedHidden}
+              initialViewError={viewError}
               playbackEntry={view === 'timeline' ? playbackEntry : null}
               onPlaybackReady={handlePlaybackReady}
               onPlaybackError={handlePlaybackError}
-            />
+            />}
           </div>
           {view === 'timeline' && (
             <div className="h-[38vh] max-h-[50%] min-h-44 min-w-0 border-t border-slate-200 dark:border-slate-700">

@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Dataset, GraphLayout, LogEvent
+from app.models import Dataset, GraphLayout, GraphViewState, LogEvent
 from app.parsers.timestamps import extract_timestamp
 from app.parsers.vendor import extract_event_type
 from app.routers import graph_cache
@@ -453,6 +453,9 @@ def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
     # The saved layout belongs to the dataset; delete it explicitly so a reused
     # dataset id never inherits a previous graph's arrangement.
     db.query(GraphLayout).filter(GraphLayout.dataset_id == dataset_id).delete(
+        synchronize_session=False
+    )
+    db.query(GraphViewState).filter(GraphViewState.dataset_id == dataset_id).delete(
         synchronize_session=False
     )
     db.delete(dataset)

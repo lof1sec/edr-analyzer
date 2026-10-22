@@ -25,6 +25,9 @@ TABLES = frozenset(ACTION_TABLES)
 FILE_ACTIONS = frozenset({"FileCreated", "FileModified", "FileDeleted", "FileRenamed"})
 REGISTRY_ACTIONS = ACTION_TABLES["DeviceRegistryEvents"]
 NETWORK_ACTIONS = ACTION_TABLES["DeviceNetworkEvents"]
+INVALID_CERTIFICATE_DATES = frozenset({
+    "CertificateCreationTime", "CertificateExpirationTime", "CertificateCountersignatureTime",
+})
 
 
 def classify_defender_table(event):
@@ -39,7 +42,9 @@ def classify_defender_table(event):
     action = as_text(event.get("ActionType")).strip()
     action_table = ACTION_TO_TABLE.get(action)
     signatures = {table for table, fields in EXCLUSIVE_FIELDS.items()
-                  if any(event.get(field) not in (None, "") for field in fields)}
+                  if any(event.get(field) not in (None, "")
+                         and not (field in INVALID_CERTIFICATE_DATES and event.get(field) == "Invalid date")
+                         for field in fields)}
     if len(signatures) > 1 or (declared and signatures and declared not in signatures):
         return None
     if action and (declared and action_table and declared != action_table

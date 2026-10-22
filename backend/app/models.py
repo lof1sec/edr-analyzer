@@ -61,3 +61,12 @@ class GraphLayout(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict
     )
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class GraphViewState(Base):
+    """Explicitly saved filters and manual hides, independent of node positions."""
+
+    __tablename__ = "graph_view_states"
+
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), primary_key=True)
+    state = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)

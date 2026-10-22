@@ -3,6 +3,7 @@ import CytoscapeComponent from 'react-cytoscapejs';
 import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye, Clock } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { hiddenDefenderElements } from './defenderEdges';
+import { mergeEventTypeSelection, setCatalogEventTypes } from './eventTypeCatalog';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from './EmptyState';
@@ -138,7 +139,7 @@ function getLayoutConfig(mode, initialPositions, selectedNode, elementCount = 0)
   }
 }
 
-export default function GraphView({ datasetId, graphFilters, setGraphFilters, playbackEntry, onPlaybackReady, onPlaybackError }) {
+export default function GraphView({ datasetId, graphFilters, setGraphFilters, initialHidden = [], initialViewError = '', playbackEntry, onPlaybackReady, onPlaybackError }) {
   const playbackElementId = playbackEntry?.focus_element_id;
   const rangeFrom = graphFilters.rangeFrom;
   const rangeTo = graphFilters.rangeTo;
@@ -157,6 +158,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
   const setUsers = useCallback((value) => setFilter('users', value), [setFilter]);
   const setPids = useCallback((value) => setFilter('pids', value), [setFilter]);
   const [elements, setElements] = useState([]);
+  const [availableEventTypes, setAvailableEventTypes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -207,7 +209,46 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
   const [pidSearch, setPidSearch] = useState('');
 
   // Manual Hiding State
-  const [manuallyHidden, setManuallyHidden] = useState(new Set());
+  const [manuallyHidden, setManuallyHidden] = useState(() => new Set(initialHidden));
+  const [viewStatus, setViewStatus] = useState(initialViewError);
+  const [savingView, setSavingView] = useState(false);
+
+  const saveView = async () => {
+    if (!datasetId || loading || savingView) return;
+    setSavingView(true);
+    setViewStatus('');
+    try {
+      await api.saveView(datasetId, {
+        rangeFrom, rangeTo, globalSearch,
+        hiddenEventTypes: Object.keys(eventTypes).filter(key => eventTypes[key] === false),
+        hiddenUsers: Object.keys(users).filter(key => users[key] === false),
+        hiddenPids: Object.keys(pids).filter(key => pids[key] === false),
+        hiddenElements: [...manuallyHidden],
+      });
+      setViewStatus('View saved.');
+    } catch (err) {
+      setViewStatus(`Could not save view: ${err.message}`);
+    } finally {
+      setSavingView(false);
+    }
+  };
+
+  const resetView = async () => {
+    if (!datasetId || savingView) return;
+    setSavingView(true);
+    try {
+      await api.deleteView(datasetId);
+      setGraphFilters({ rangeFrom: null, rangeTo: null, globalSearch: '', eventTypes: {}, users: {}, pids: {} });
+      setFromInput('');
+      setToInput('');
+      setManuallyHidden(new Set());
+      setViewStatus('Saved view reset.');
+    } catch (err) {
+      setViewStatus(`Could not reset view: ${err.message}`);
+    } finally {
+      setSavingView(false);
+    }
+  };
   const [showDefenderReports, setShowDefenderReports] = useState(false);
 
   // Right Pane Toggle State
@@ -369,13 +410,8 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
           initialPositions.current = saved;
         }
 
-        const uniqueEvents = new Set();
         const uniqueUsers = new Set();
         const uniquePids = new Set();
-
-        data.elements.edges?.forEach(e => {
-          if (e.data.event_simplename) uniqueEvents.add(e.data.event_simplename);
-        });
 
         data.elements.nodes?.forEach(n => {
           if (n.data.group === 'process') {
@@ -384,9 +420,9 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
           }
         });
 
-        setEventTypes(previous => ({ ...previous, ...Object.fromEntries(
-          Array.from(uniqueEvents, evt => [evt, previous[evt] !== false])
-        ) }));
+        const catalog = data.event_types || [];
+        setAvailableEventTypes(catalog);
+        setEventTypes(previous => mergeEventTypeSelection(previous, catalog));
         setUsers(previous => ({ ...previous, ...Object.fromEntries(
           Array.from(uniqueUsers, usr => [usr, previous[usr] !== false])
         ) }));
@@ -1039,7 +1075,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
   }
 
   const toggleEvent = (evt) => setEventTypes(p => ({ ...p, [evt]: !p[evt] }));
-  const setAllEvents = (val) => setEventTypes(p => Object.keys(p).reduce((acc, k) => ({ ...acc, [k]: val }), {}));
+  const setAllEvents = (val) => setEventTypes(p => setCatalogEventTypes(p, availableEventTypes, val));
 
   const toggleUser = (usr) => setUsers(p => ({ ...p, [usr]: !p[usr] }));
   const setAllUsers = (val) => setUsers(p => Object.keys(p).reduce((acc, k) => ({ ...acc, [k]: val }), {}));
@@ -1050,7 +1086,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
   // Backend sends aggregated counts; show the most frequent first.
   const unmappedEntries = Object.entries(unmappedEvents).sort((a, b) => b[1] - a[1]);
 
-  const filteredEventTypes = Object.keys(eventTypes)
+  const filteredEventTypes = [...availableEventTypes]
     .sort()
     .filter((evt) => evt.toLowerCase().includes(eventTypeSearch.toLowerCase()));
   const filteredUsers = Object.keys(users)
@@ -1085,6 +1121,15 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, pl
 
         {/* Layout Toolbar */}
         <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2 max-w-[calc(100%-2rem)]">
+            <button type="button" onClick={saveView} disabled={!datasetId || loading || savingView}
+              className="bg-blue-600 text-white rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+              {savingView ? 'Saving…' : 'Save View'}
+            </button>
+            <button type="button" onClick={resetView} disabled={!datasetId || savingView}
+              className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+              Reset view
+            </button>
+            {viewStatus && <span role="status" className="bg-white dark:bg-slate-800 rounded px-2 py-1 text-xs">{viewStatus}</span>}
             <select
                 value={layoutMode}
                 onChange={(e) => applyLayout(e.target.value)}

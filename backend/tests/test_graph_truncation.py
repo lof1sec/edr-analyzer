@@ -105,6 +105,25 @@ def test_dense_process_edges_are_recovered_by_pages(admin_client, monkeypatch):
     assert len(edges) == graph["total_edges"] == 40  # 20 spawns + 20 reporter observations
 
 
+def test_event_type_catalog_includes_truncated_mapped_events_in_window(admin_client, monkeypatch):
+    monkeypatch.setenv("MAX_INITIAL_ELEMENTS", "1")
+    rows = (
+        b"TableName,ActionType,DeviceName,InitiatingProcessId,ProcessId,Timestamp\n"
+        b"DeviceProcessEvents,ProcessCreated,H1,500,600,2024-01-01T00:00:00Z\n"
+        b"DeviceProcessEvents,,H1,500,601,2024-01-02T00:00:00Z\n"
+        b",,H1,500,602,2024-01-02T00:00:00Z\n"
+    )
+    dataset_id = _upload(admin_client, rows).json()["dataset_id"]
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    assert graph["truncated"]
+    assert graph["event_types"] == ["DeviceProcessEvents", "ProcessCreated"]
+    window = admin_client.get(
+        f"/api/graph/{dataset_id}",
+        params={"from": 1704153600000},
+    ).json()
+    assert window["event_types"] == ["DeviceProcessEvents"]
+
+
 def test_large_graph_is_truncated_and_pages_recover_everything(admin_client, monkeypatch):
     monkeypatch.setenv("MAX_INITIAL_ELEMENTS", "5")
     rows = b"".join(

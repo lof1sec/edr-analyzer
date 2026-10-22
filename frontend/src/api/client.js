@@ -136,6 +136,12 @@ export const api = {
 
   getLayout: (id) => request(`/api/graph/${id}/layout`),
 
+  getView: (id) => request(`/api/graph/${id}/view`),
+  saveView: (id, view) => request(`/api/graph/${id}/view`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(view),
+  }),
+  deleteView: (id) => request(`/api/graph/${id}/view`, { method: 'DELETE' }),
+
   saveLayout: (id, positions) =>
     request(`/api/graph/${id}/layout`, {
       method: 'PUT',
