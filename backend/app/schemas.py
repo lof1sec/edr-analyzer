@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DatasetResponse(BaseModel):
@@ -33,6 +33,31 @@ class LayoutRequest(BaseModel):
     """Persisted graph layout: node id -> position."""
 
     positions: dict[str, Position] = Field(default_factory=dict)
+
+
+class ViewStateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rangeFrom: int | None = None
+    rangeTo: int | None = None
+    globalSearch: str = Field(default="", max_length=4096)
+    hiddenEventTypes: list[str] = Field(default_factory=list, max_length=10000)
+    hiddenUsers: list[str] = Field(default_factory=list, max_length=10000)
+    hiddenPids: list[str] = Field(default_factory=list, max_length=10000)
+    hiddenElements: list[str] = Field(default_factory=list, max_length=100000)
+
+    @field_validator("hiddenEventTypes", "hiddenUsers", "hiddenPids", "hiddenElements")
+    @classmethod
+    def validate_ids(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 8192 for value in values):
+            raise ValueError("Filter values must be nonempty and at most 8192 characters")
+        return list(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.rangeFrom is not None and self.rangeTo is not None and self.rangeFrom > self.rangeTo:
+            raise ValueError("rangeFrom must not exceed rangeTo")
+        return self
 
 
 class AuthStatus(BaseModel):

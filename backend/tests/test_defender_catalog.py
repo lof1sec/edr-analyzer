@@ -1,3 +1,5 @@
+import pytest
+
 from app.parsers.builder import GraphBuilder
 from app.parsers.defender import classify_defender_table, parse_defender_event
 from app.parsers.events import describe_event
@@ -40,3 +42,28 @@ def test_actionless_exclusive_signatures_and_disruption_actions():
     assert classify_defender_table({'ActionType': 'ContainedUserLogonBlocked'}) == 'DisruptionAndResponseEvents'
     assert classify_defender_table({'ActionType': 'ContainedUserLogonBlocked',
                                     'TableName': 'DeviceFileCertificateInfo'}) is None
+
+
+@pytest.mark.parametrize('fields', [
+    {'CertificateCreationTime': 'Invalid date'},
+    {'CertificateExpirationTime': 'Invalid date'},
+    {'CertificateCountersignatureTime': 'Invalid date'},
+    {'CertificateCreationTime': 'Invalid date', 'CertificateExpirationTime': 'Invalid date',
+     'CertificateCountersignatureTime': 'Invalid date'},
+])
+def test_invalid_certificate_dates_do_not_supply_signatures(fields):
+    event = {'ActionType': 'ProcessCreated', 'Type': 'DeviceFileCertificateInfo', **fields}
+    original = event.copy()
+    assert classify_defender_table(event) == 'DeviceProcessEvents'
+    assert event == original
+    assert classify_defender_table({'Type': 'DeviceFileCertificateInfo', **fields}) is None
+    assert classify_defender_table({'TableName': 'DeviceProcessEvents', **event}) == 'DeviceProcessEvents'
+
+
+def test_real_certificate_signatures_still_conflict():
+    for field in ('CertificateCreationTime', 'CertificateExpirationTime',
+                  'CertificateCountersignatureTime'):
+        assert classify_defender_table({'ActionType': 'ProcessCreated', field: '2026-01-01'}) is None
+    for extra in ({'SignerHash': 'abc'}, {'TableName': 'DeviceFileCertificateInfo'}):
+        assert classify_defender_table({'ActionType': 'ProcessCreated',
+                                        'CertificateCreationTime': 'Invalid date', **extra}) is None

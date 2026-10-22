@@ -70,6 +70,27 @@ def test_upload_list_graph_search_element_logs_and_delete_flow(admin_client):
     assert admin_client.get(f"/api/graph/{dataset_id}").status_code == 404
 
 
+def test_csv_invalid_certificate_dates_preserve_evidence_and_spawn(admin_client, db_session):
+    csv = (b"ActionType,DeviceName,InitiatingProcessId,ProcessId,Type,CertificateCreationTime,"
+           b"CertificateExpirationTime,CertificateCountersignatureTime\n"
+           b"ProcessCreated,H1,500,600,DeviceProcessEvents,Invalid date,Invalid date,Invalid date\n")
+    response = _upload(admin_client, csv, "process.csv")
+    assert response.status_code == 200
+    dataset_id = response.json()["dataset_id"]
+    event = db_session.query(LogEvent).filter_by(dataset_id=dataset_id).one().data
+    assert event["Type"] == "DeviceProcessEvents"
+    assert event["CertificateCreationTime"] == "Invalid date"
+    assert event["CertificateExpirationTime"] == "Invalid date"
+    assert event["CertificateCountersignatureTime"] == "Invalid date"
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    assert graph["unmapped_events"] == {}
+    assert any(edge["data"]["source"] == "500@H1" and edge["data"]["target"] == "600@H1"
+               and edge["data"]["label"] == "Spawns" for edge in graph["elements"]["edges"])
+    logs = admin_client.get(f"/api/graph/{dataset_id}/element-logs",
+                            params={"element_id": "600@H1"}).json()
+    assert any(log["CertificateCreationTime"] == "Invalid date" for log in logs["raw_logs"])
+
+
 def test_unmapped_events_are_aggregated_to_counts(admin_client):
     csv = b"ActionType,DeviceName\nSomeUnknownAction,H1\nSomeUnknownAction,H1\n"
     dataset_id = _upload(admin_client, csv, "unknown.csv").json()["dataset_id"]
