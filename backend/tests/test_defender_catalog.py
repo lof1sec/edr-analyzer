@@ -44,6 +44,63 @@ def test_actionless_exclusive_signatures_and_disruption_actions():
                                     'TableName': 'DeviceFileCertificateInfo'}) is None
 
 
+EXPECTED_DEFENDER_TYPES = (
+    'DeviceEvents',
+    'DeviceFileCertificateInfo',
+    'DeviceFileEvents',
+    'DeviceImageLoadEvents',
+    'DeviceInfo',
+    'DeviceLogonEvents',
+    'DeviceNetworkEvents',
+    'DeviceNetworkInfo',
+    'DeviceProcessEvents',
+    'DeviceRegistryEvents',
+    'DisruptionAndResponseEvents',
+)
+
+
+@pytest.mark.parametrize('table', EXPECTED_DEFENDER_TYPES)
+def test_type_field_identifies_every_defender_table_directly(table):
+    event = {'Type': table}
+    assert get_vendor(event) == DEFENDER
+    assert classify_defender_table(event) == table
+    assert extract_event_type(event) == table
+    assert extract_event_type({'Type': table, 'ActionType': ''}) == table
+    assert extract_event_type({'Type': f' {table} '}) == table
+    assert classify_defender_table({'Type': f' {table} '}) == table
+
+
+def test_type_field_is_trusted_directly_over_conflicting_fields_and_unlisted_actions():
+    assert classify_defender_table({
+        'Type': 'DeviceProcessEvents',
+        'ActionType': 'ProcessCreated',
+        'SignerHash': 'abc',
+        'CertificateCreationTime': '2026-01-01',
+    }) == 'DeviceProcessEvents'
+    assert classify_defender_table({
+        'Type': 'DeviceEvents',
+        'ActionType': 'FutureUnlistedAction',
+        'LocalIPType': 'Public',
+    }) == 'DeviceEvents'
+    assert classify_defender_table({
+        'Type': 'DeviceFileCertificateInfo',
+        'ActionType': 'ProcessCreated',
+    }) == 'DeviceFileCertificateInfo'
+    assert classify_defender_table({
+        'Type': 'DeviceProcessEvents',
+        'TableName': 'DeviceFileEvents',
+    }) == 'DeviceProcessEvents'
+
+
+def test_unknown_type_is_left_unmapped_and_empty_type_falls_back():
+    assert classify_defender_table({'Type': 'IdentityLogonEvents', 'ActionType': 'LogonSuccess'}) is None
+    assert classify_defender_table({'Type': 'AlertInfo', 'OSPlatform': 'Windows'}) is None
+    assert classify_defender_table({'Type': 'NotADefenderTable'}) is None
+    assert get_vendor({'Type': 'NotADefenderTable'}) != DEFENDER
+    assert classify_defender_table({'Type': '', 'ActionType': 'ProcessCreated'}) == 'DeviceProcessEvents'
+    assert classify_defender_table({'Type': None, 'OSPlatform': 'Windows'}) == 'DeviceInfo'
+
+
 @pytest.mark.parametrize('fields', [
     {'CertificateCreationTime': 'Invalid date'},
     {'CertificateExpirationTime': 'Invalid date'},
@@ -52,11 +109,11 @@ def test_actionless_exclusive_signatures_and_disruption_actions():
      'CertificateCountersignatureTime': 'Invalid date'},
 ])
 def test_invalid_certificate_dates_do_not_supply_signatures(fields):
-    event = {'ActionType': 'ProcessCreated', 'Type': 'DeviceFileCertificateInfo', **fields}
+    event = {'ActionType': 'ProcessCreated', **fields}
     original = event.copy()
     assert classify_defender_table(event) == 'DeviceProcessEvents'
     assert event == original
-    assert classify_defender_table({'Type': 'DeviceFileCertificateInfo', **fields}) is None
+    assert classify_defender_table({**fields}) is None
     assert classify_defender_table({'TableName': 'DeviceProcessEvents', **event}) == 'DeviceProcessEvents'
 
 

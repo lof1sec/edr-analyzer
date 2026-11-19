@@ -86,13 +86,17 @@ Data flow: **upload → parse → store (Postgres JSONB) → build graph → ren
   per-element `first_time`/`last_time` (epoch ms of the earliest/latest event on
   an element, shown in Node Details), and the server-only event-to-element map.
 - `backend/app/parsers/falcon.py` / `defender.py` — per-vendor event mapping.
-- Defender `DeviceProcessEvents` is identified by explicit table markers, exclusive
-  process columns (`ProcessUniqueId`, `ProcessVersionInfo*`, integrity/token
-  fields), or unambiguous `ProcessCreated`/`OpenProcess` actor and target IDs.
-  `InitiatingProcessUniqueId` is shared across tables and is not a signature.
-  `ProcessCreated` links `InitiatingProcessId` to `ProcessId`; `OpenProcess`
-  does not imply creation and remains unmapped. Unmarked legacy exports retain
-  their other existing mappings.
+- Defender Advanced Hunting tables are identified primarily from Microsoft's
+  `Type` field (`DeviceEvents`, `DeviceFileCertificateInfo`, `DeviceFileEvents`,
+  `DeviceImageLoadEvents`, `DeviceInfo`, `DeviceLogonEvents`,
+  `DeviceNetworkEvents`, `DeviceNetworkInfo`, `DeviceProcessEvents`,
+  `DeviceRegistryEvents`, `DisruptionAndResponseEvents`), trusted directly when
+  present (unknown `Type` values are left unmapped). Legacy exports without
+  `Type` fall back to `TableName`/`SourceTable`, `ActionType`, and exclusive
+  columns (`InitiatingProcessUniqueId` is shared across tables and is not a
+  signature). `ProcessCreated` links `InitiatingProcessId` to `ProcessId`;
+  `OpenProcess` does not imply creation. Unmarked legacy exports retain their
+  other existing mappings.
 - `backend/app/parsers/falcon_additional.py` — additional Falcon graph mappings
   (injection, rename, .NET module, script detections, WMI, services and remote
   command responses); keep large script/output fields in raw evidence only.
@@ -150,7 +154,7 @@ technical detail.
 ## Conventions & invariants (do not break)
 
 1. **Vendor detection is by fields, not file extension.** Defender uses
-   `ActionType`, Falcon uses `#event_simpleName`. Reuse
+   `Type` (Defender table name) or `ActionType`, Falcon uses `#event_simpleName`. Reuse
    `app/parsers/vendor.py` rather than hardcoding markers.
 2. **Graph ids must be stable and unique.**
    - Process node ids are **host-scoped**: `pid@host` (bare `pid` when the event

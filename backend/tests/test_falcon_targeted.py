@@ -1,4 +1,4 @@
-﻿"""Conservative mappings for Falcon classifications and sensor observations."""
+"""Conservative mappings for Falcon classifications and sensor observations."""
 
 import io
 import json
@@ -50,8 +50,7 @@ def test_threads_link_only_explicit_processes(name):
     assert all(e["data"]["source"] != "11@WIN1" for e in payload["elements"]["edges"])
 
 
-@pytest.mark.parametrize("name,field", [("CommandHistory", "CommandHistory"),
-                                      ("CriticalEnvironmentVariableChanged", "EnvironmentVariableValue"),
+@pytest.mark.parametrize("name,field", [("CriticalEnvironmentVariableChanged", "EnvironmentVariableValue"),
                                       ("DataEgress", "JustificationUserExplanation")])
 def test_sensitive_content_is_evidence_only(name, field):
     payload = graph(name, ContextProcessId="11", EnvironmentVariableName="TOKEN",

@@ -286,6 +286,7 @@ ACTION_TABLES = {
     }),
 }
 
+DEFENDER_TABLES = frozenset(ACTION_TABLES)
 ACTION_TO_TABLE = {action: table for table, actions in ACTION_TABLES.items() for action in actions}
 
 EXCLUSIVE_FIELDS = {
