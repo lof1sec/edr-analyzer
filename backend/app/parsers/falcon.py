@@ -124,6 +124,34 @@ def _decode_module_number(value, labels: dict, bitfield=False) -> str:
     return f"{', '.join(names) or 'NONE'} ({text})"
 
 
+COMMAND_HISTORY_LABEL_MAX_LINES = 15
+COMMAND_HISTORY_LABEL_WIDTH = 60
+
+
+def _command_history_lines(text: str) -> list[str]:
+    """Split a Falcon ``CommandHistory`` value into individual commands.
+
+    Falcon separates the console history entries with a pilcrow (``¶``);
+    ordinary line breaks are honoured as well. Blank entries are dropped.
+    """
+    normalised = text.replace("\r\n", "\n").replace("\r", "\n").replace("¶", "\n")
+    return [line.strip() for line in normalised.split("\n") if line.strip()]
+
+
+def _command_history_label(commands: list[str]) -> str:
+    """Wrapped node label showing the commands, capped so the box stays readable.
+
+    The full history is kept in the node title and the raw evidence.
+    """
+    lines = []
+    for command in commands:
+        lines.extend(textwrap.wrap(command, width=COMMAND_HISTORY_LABEL_WIDTH) or [command])
+    if len(lines) > COMMAND_HISTORY_LABEL_MAX_LINES:
+        hidden = len(lines) - COMMAND_HISTORY_LABEL_MAX_LINES + 1
+        lines = lines[:COMMAND_HISTORY_LABEL_MAX_LINES - 1] + [f"… (+{hidden} more lines)"]
+    return "\n".join(lines) or "Command History"
+
+
 def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_id: str,
                        actor_name: str, target_id: str, target_name: str, username: str, hostname: str):
     parent_id = event.get("ParentProcessId")
@@ -641,9 +669,10 @@ def parse_falcon_event(builder: GraphBuilder, event: dict, evt_type: str, actor_
             actor_ident = builder.get_or_create_process_node(
                 actor_ident, actor_name, username, hostname, evt_type, event) or actor_ident
             cmd_node_id = f"cmdhist_{actor_ident}_{hash_str(cmd_history)}"
+            commands = _command_history_lines(cmd_history)
             builder.add_or_update_artifact_node(cmd_node_id,
-                                                "Command History",
-                                                f"[{evt_type}]\nCommand history recorded (see raw evidence)",
+                                                _command_history_label(commands),
+                                                f"[{evt_type}]\nCommand History:\n" + "\n".join(commands),
                                                 "commandline-exec",
                                                 event)
             builder.add_edge(

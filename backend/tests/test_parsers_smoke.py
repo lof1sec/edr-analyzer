@@ -418,3 +418,42 @@ def test_falcon_classified_module_load_reuses_module_and_handles_missing_fields(
     assert {e["data"]["source"] for e in payload["elements"]["edges"]} == {
         "200@WIN1", "200@WIN2"}
     assert "300@WIN1" in nodes
+
+
+def test_falcon_command_history_shows_commands_in_node_label():
+    builder = GraphBuilder()
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CommandHistory",
+            "ContextProcessId": "800",
+            "CommandHistory": "whoami¶net user /domain¶ ¶ipconfig /all",
+        },
+        "CommandHistory", "800", "cmd.exe", None, None, "CORP\\bob", "H1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "commandline-exec")
+    assert node["data"]["label"] == "whoami\nnet user /domain\nipconfig /all"
+    assert "whoami\nnet user /domain\nipconfig /all" in node["data"]["title"]
+
+
+def test_falcon_command_history_label_is_capped_but_title_keeps_all():
+    builder = GraphBuilder()
+    commands = [f"echo command-{i}" for i in range(40)]
+    parse_falcon_event(
+        builder,
+        {
+            "#event_simpleName": "CommandHistory",
+            "ContextProcessId": "800",
+            "CommandHistory": "¶".join(commands),
+        },
+        "CommandHistory", "800", "cmd.exe", None, None, "CORP\\bob", "H1",
+    )
+
+    payload = builder.build_cytoscape_elements()
+    node = next(n for n in payload["elements"]["nodes"] if n["data"]["group"] == "commandline-exec")
+    label_lines = node["data"]["label"].split("\n")
+    assert len(label_lines) == 15
+    assert label_lines[-1] == "… (+26 more lines)"
+    assert "echo command-39" in node["data"]["title"]

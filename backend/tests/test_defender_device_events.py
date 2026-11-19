@@ -22,8 +22,10 @@ def parse(event):
 def test_table_marker_is_explicit_only():
     assert device_events_table({"ActionType": "FileCreated", "FileName": "a"}) is None
     assert device_events_table({"SourceTable": "DeviceEvents"}) == "DeviceEvents"
+    assert device_events_table({"Type": "DeviceEvents"}) == "DeviceEvents"
     assert not is_confirmed_device_event({"ActionType": "PowerShellCommand"})
     assert is_confirmed_device_event({"TableName": "DeviceEvents", "SourceTable": "DeviceEvents"})
+    assert is_confirmed_device_event({"Type": "DeviceEvents"})
 
 
 def test_conflicting_markers_cannot_confirm_device_events():
