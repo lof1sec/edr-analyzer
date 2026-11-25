@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye, Clock } from 'lucide-react';
+import { Filter, X, Copy, Check, ZoomIn, ZoomOut, Network, RotateCcw, Eye, Clock, Maximize2, Minimize2 } from 'lucide-react';
 import { stylesheet, NODE_GROUPS } from './cytoscapeStyles';
 import { hiddenDefenderElements } from './defenderEdges';
 import { mergeEventTypeSelection, setCatalogEventTypes } from './eventTypeCatalog';
+import { collapseClustersInElements, getClusterSummary } from './clusterControls';
 import { api } from '../api/client';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from './EmptyState';
@@ -175,6 +176,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
   const [baseElementCount, setBaseElementCount] = useState(0);
   // cluster_id -> { node, edge, memberIds, memberEdgeIds } for the expanded set.
   const [expandedClusters, setExpandedClusters] = useState({});
+  const [expandingClusters, setExpandingClusters] = useState(false);
   // Large graphs are truncated server-side: these track the initial view vs the
   // full element count and drive the "load more" pager.
   const [truncated, setTruncated] = useState(false);
@@ -392,6 +394,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
     setLayoutMode('force');
     setSearchResult({ q: '', key: '', ids: null });
     setExpandedClusters({});
+    setExpandingClusters(false);
     setError(null);
     const fetchGraph = async () => {
       setLoading(true);
@@ -835,6 +838,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
     if (clusterNode.empty()) return;
 
     const clusterData = clusterNode.data();
+    const clusterPos = { ...clusterNode.position() };
     const hubId = clusterData.parentId;
     const hub = hubId ? cy.getElementById(hubId) : null;
     const origin = hub && hub.nonempty() ? hub.position() : clusterNode.position();
@@ -853,7 +857,7 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
       setExpandedClusters(prev => ({
         ...prev,
         [clusterId]: {
-          node: { data: clusterData },
+          node: { data: clusterData, position: clusterPos },
           edge: clusterEdgeData ? { data: clusterEdgeData } : null,
           memberIds: nodes.map(n => n.data.id),
           memberEdgeIds: edges.map(e => e.data.id),
@@ -869,14 +873,95 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
 
   useEffect(() => { expandClusterRef.current = expandCluster; }, [expandCluster]);
 
+  const clusterSummary = useMemo(
+    () => getClusterSummary(elements, expandedClusters),
+    [elements, expandedClusters],
+  );
+
+  const expandAllClusters = useCallback(async () => {
+    const cy = cyRef.current;
+    if (!cy || !graphReady.current || expandingClusters) return;
+    const targets = clusterSummary.collapsedClusters;
+    if (targets.length === 0) return;
+
+    const generation = graphGeneration.current;
+    const context = graphContext.current;
+    const snapshots = targets.map(clusterEl => {
+      const clusterId = clusterEl.data.id;
+      const cyNode = cy.getElementById(clusterId);
+      const clusterData = cyNode.nonempty() ? cyNode.data() : clusterEl.data;
+      const clusterPos = cyNode.nonempty() ? { ...cyNode.position() } : (clusterEl.position || { x: 0, y: 0 });
+      const hubId = clusterData.parentId;
+      const hub = hubId ? cy.getElementById(hubId) : null;
+      const origin = hub && hub.nonempty() ? { ...hub.position() } : clusterPos;
+      const clusterEdgeId = `cluster_edge_${hubId}`;
+      const clusterEdge = cy.getElementById(clusterEdgeId);
+      const clusterEdgeData = clusterEdge.nonempty() ? clusterEdge.data() : null;
+      return { clusterId, clusterData, clusterPos, origin, clusterEdgeId, clusterEdgeData };
+    });
+
+    setExpandingClusters(true);
+    try {
+      const results = await Promise.allSettled(
+        snapshots.map(async snap => {
+          const res = await api.getCluster(context.datasetId, snap.clusterId, context);
+          return { snap, res };
+        }),
+      );
+      if (graphGeneration.current !== generation) return;
+
+      const removedIds = new Set();
+      const addedElements = [];
+      const newlyExpanded = {};
+      let totalNodes = 0;
+      let failed = 0;
+
+      results.forEach(outcome => {
+        if (outcome.status !== 'fulfilled') {
+          failed += 1;
+          return;
+        }
+        const { snap, res } = outcome.value;
+        const nodes = res.nodes || [];
+        const edges = res.edges || [];
+        removedIds.add(snap.clusterId);
+        if (res.cluster_edge_id) removedIds.add(res.cluster_edge_id);
+        removedIds.add(snap.clusterEdgeId);
+        addedElements.push(...ringPositions(nodes, snap.origin), ...edges);
+        newlyExpanded[snap.clusterId] = {
+          node: { data: snap.clusterData, position: snap.clusterPos },
+          edge: snap.clusterEdgeData ? { data: snap.clusterEdgeData } : null,
+          memberIds: nodes.map(n => n.data.id),
+          memberEdgeIds: edges.map(e => e.data.id),
+        };
+        totalNodes += nodes.length;
+      });
+
+      if (Object.keys(newlyExpanded).length > 0) {
+        setElements(prev => mergeGraphElements(
+          prev.filter(el => !removedIds.has(el.data.id)),
+          addedElements,
+        ));
+        setExpandedClusters(prev => ({ ...prev, ...newlyExpanded }));
+        toast.info(`Expanded ${totalNodes} collapsed element${totalNodes === 1 ? '' : 's'}.`);
+      }
+      if (failed > 0) {
+        toast.error(`Could not expand ${failed} cluster${failed === 1 ? '' : 's'}.`);
+      }
+    } finally {
+      if (graphGeneration.current === generation) setExpandingClusters(false);
+    }
+  }, [clusterSummary.collapsedClusters, expandingClusters]);
+
   const collapseCluster = (clusterId) => {
     const info = expandedClusters[clusterId];
     if (!info) return;
     const memberIds = new Set([...info.memberIds, ...info.memberEdgeIds]);
-    setElements(prev => prev
-      .filter(el => !memberIds.has(el.data.id))
-      .concat([info.node, info.edge].filter(Boolean))
-    );
+    setElements(prev => collapseClustersInElements(prev, [info]).elements);
+    if (selectedNode?.id && memberIds.has(selectedNode.id)) {
+      setSelectedNode(null);
+      setSelectedLogs([]);
+    }
     setExpandedClusters(prev => {
       const next = { ...prev };
       delete next[clusterId];
@@ -885,16 +970,20 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
   };
 
   const collapseAllClusters = () => {
+    const infos = Object.values(expandedClusters);
+    if (infos.length === 0) return;
     const memberIds = new Set();
-    const restored = [];
-    Object.values(expandedClusters).forEach(info => {
+    infos.forEach(info => {
       info.memberIds.forEach(id => memberIds.add(id));
       info.memberEdgeIds.forEach(id => memberIds.add(id));
-      if (info.node) restored.push(info.node);
-      if (info.edge) restored.push(info.edge);
     });
-    setElements(prev => prev.filter(el => !memberIds.has(el.data.id)).concat(restored));
+    setElements(prev => collapseClustersInElements(prev, infos).elements);
+    if (selectedNode?.id && memberIds.has(selectedNode.id)) {
+      setSelectedNode(null);
+      setSelectedLogs([]);
+    }
     setExpandedClusters({});
+    setExpandingClusters(false);
   };
 
   // Reveal the selected node's 1-hop neighbourhood when it is hidden by manual
@@ -1148,6 +1237,29 @@ export default function GraphView({ datasetId, graphFilters, setGraphFilters, in
                 title="Show or hide Defender event observations and their context (visual only)"
             >
                 Defender event observations: {showDefenderReports ? 'Shown' : 'Hidden'}
+            </button>
+            <button
+                type="button"
+                onClick={() => (clusterSummary.nextAction === 'expand' ? expandAllClusters() : collapseAllClusters())}
+                disabled={!clusterSummary.hasClusters || expandingClusters || loading}
+                aria-pressed={clusterSummary.nextAction === 'collapse'}
+                className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-3 py-1.5 text-xs font-semibold shadow hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                title={
+                  clusterSummary.nextAction === 'expand'
+                    ? `Expand ${clusterSummary.collapsedClusterCount} collapsed cluster${clusterSummary.collapsedClusterCount === 1 ? '' : 's'} (${clusterSummary.collapsedNodeCount} nodes)`
+                    : clusterSummary.nextAction === 'collapse'
+                      ? `Collapse ${clusterSummary.expandedClusterCount} expanded cluster${clusterSummary.expandedClusterCount === 1 ? '' : 's'} (${clusterSummary.expandedNodeCount} nodes)`
+                      : 'No collapsed nodes in this graph'
+                }
+            >
+                {clusterSummary.nextAction === 'collapse' ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                {expandingClusters
+                  ? 'Expanding…'
+                  : clusterSummary.nextAction === 'expand'
+                    ? `Expand collapsed (${clusterSummary.collapsedNodeCount})`
+                    : clusterSummary.nextAction === 'collapse'
+                      ? `Collapse nodes (${clusterSummary.expandedNodeCount})`
+                      : 'Expand collapsed'}
             </button>
             <select
                 value={focusDepth}

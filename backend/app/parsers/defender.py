@@ -1,16 +1,44 @@
 """Conservative Defender Advanced Hunting graph mappings.
 
-Known ActionType values identify their Advanced Hunting table. Only genuinely
-exclusive columns can contradict that provenance; shared columns cannot.
+Microsoft's ``Type`` field identifies the Advanced Hunting table directly when
+present. For older exports without ``Type``, known ``ActionType`` values,
+``TableName``/``SourceTable`` markers, and exclusive columns are used instead.
 """
 
 from app.parsers.builder import GraphBuilder, as_text, get_additional_fields_dict, string_hash
-from app.parsers.defender_catalog import ACTION_TABLES, ACTION_TO_TABLE, EXCLUSIVE_FIELDS
+from app.parsers.defender_catalog import (
+    ACTION_TABLES,
+    ACTION_TO_TABLE,
+    DEFENDER_TABLES,
+    EXCLUSIVE_FIELDS,
+)
 from app.parsers.defender_legacy import parse_defender_event as parse_legacy_defender_event
+
+TABLES = DEFENDER_TABLES
+_UNKNOWN_TYPE = "unknown type"
+
+
+def defender_type_table(event):
+    """Return the Defender table from ``Type``, or ``None`` when absent.
+
+    Returns ``_UNKNOWN_TYPE`` when ``Type`` is a non-empty string outside
+    ``TABLES`` so unsupported tables do not fall back to legacy heuristics.
+    """
+    if not isinstance(event, dict):
+        return None
+    value = event.get("Type")
+    if isinstance(value, str):
+        table = value.strip()
+        if table:
+            return table if table in TABLES else _UNKNOWN_TYPE
+    return None
 
 
 def device_events_table(event):
-    """Return the declared table; conflicting declarations are not trusted."""
+    """Return the declared table; ``Type`` takes precedence over legacy markers."""
+    typed = defender_type_table(event)
+    if typed is not None:
+        return None if typed == _UNKNOWN_TYPE else typed
     tables = {value.strip() for key in ("TableName", "SourceTable")
               if isinstance(value := event.get(key), str) and value.strip()}
     if len(tables) == 1:
@@ -19,8 +47,6 @@ def device_events_table(event):
         return "conflicting table markers"
     return None
 
-
-TABLES = frozenset(ACTION_TABLES)
 
 FILE_ACTIONS = frozenset({"FileCreated", "FileModified", "FileDeleted", "FileRenamed"})
 REGISTRY_ACTIONS = ACTION_TABLES["DeviceRegistryEvents"]
@@ -31,11 +57,17 @@ INVALID_CERTIFICATE_DATES = frozenset({
 
 
 def classify_defender_table(event):
-    """Trust an explicit table unless its fields identify a different family.
+    """Identify the Defender Advanced Hunting table for an event.
 
-    Shared process and device columns never establish provenance on their own.
-    A contradictory action/column signature is left unmapped.
+    When Microsoft's ``Type`` field is present, it is trusted directly without
+    cross-checking ``ActionType`` or exclusive columns (and unknown ``Type``
+    values are left unmapped). When ``Type`` is absent or empty, fall back to
+    ``TableName``/``SourceTable``, ``ActionType``, and exclusive columns.
     """
+    typed = defender_type_table(event)
+    if typed is not None:
+        return None if typed == _UNKNOWN_TYPE else typed
+
     declared = device_events_table(event)
     if declared == "conflicting table markers":
         return None
@@ -62,7 +94,7 @@ def classify_defender_table(event):
 
 
 def is_confirmed_device_event(event):
-    """Only an explicit source table currently proves DeviceEvents provenance."""
+    """Only an explicit table marker (``Type``/``TableName``/``SourceTable``) proves DeviceEvents provenance."""
     return device_events_table(event) == "DeviceEvents"
 
 
@@ -70,12 +102,244 @@ def _field(event, key):
     return as_text(event.get(key)).strip()
 
 
-def _artifact(builder, actor, event, kind, value, label, group, relation, color, detail=None):
+def _truncate_field(value: str, limit: int = 60) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit - 1] + "…"
+
+
+def _dns_connection_artifact(event, endpoint):
+    """Build ``(identity, label, detail)`` for ``DnsConnectionInspected``.
+
+    Combines ``RemoteIP:RemotePort`` (or ``RemoteUrl``) with ``query``,
+    ``qtype_name``, ``rcode_name``, and ``direction`` from ``AdditionalFields``.
+    """
+    details = get_additional_fields_dict(event)
+    query = as_text(details.get("query")).strip()
+    qtype = as_text(details.get("qtype_name")).strip()
+    rcode = as_text(details.get("rcode_name")).strip()
+    direction = as_text(details.get("direction")).strip()
+
+    if not endpoint and not query:
+        return "", "", ""
+
+    if not any((query, qtype, rcode, direction)):
+        return endpoint, _truncate_field(endpoint, 80), endpoint
+
+    label_lines = []
+    detail_lines = []
+    if endpoint:
+        label_lines.append(_truncate_field(endpoint, 60))
+        detail_lines.append(f"Remote: {endpoint}")
+    if query:
+        label_lines.append(f"Query: {_truncate_field(query, 60)}")
+        detail_lines.append(f"Query: {query}")
+    dns_meta = []
+    if qtype:
+        dns_meta.append(f"QType: {_truncate_field(qtype, 24)}")
+        detail_lines.append(f"QType: {qtype}")
+    if rcode:
+        dns_meta.append(f"RCode: {_truncate_field(rcode, 24)}")
+        detail_lines.append(f"RCode: {rcode}")
+    if dns_meta:
+        label_lines.append(" | ".join(dns_meta))
+    if direction:
+        label_lines.append(f"Direction: {_truncate_field(direction, 24)}")
+        detail_lines.append(f"Direction: {direction}")
+
+    identity = "\x1f".join((endpoint, query, qtype, rcode, direction))
+    return identity, "\n".join(label_lines), "\n".join(detail_lines)
+
+
+def _http_connection_artifact(event):
+    """Build ``(identity, label, detail)`` for ``HttpConnectionInspected``.
+
+    Combines ``RemoteIP:RemotePort``, optional ``RemoteUrl``, and ``host``,
+    ``method``, ``direction``, and ``status_code`` from ``AdditionalFields``.
+    """
+    remote_ip = _field(event, "RemoteIP")
+    port = _field(event, "RemotePort")
+    remote_url = _field(event, "RemoteUrl")
+    ip_endpoint = remote_ip + (":" + port if port else "") if remote_ip else ""
+
+    details = get_additional_fields_dict(event)
+    host = as_text(details.get("host")).strip()
+    method = as_text(details.get("method")).strip()
+    direction = as_text(details.get("direction")).strip()
+    status_code = as_text(details.get("status_code")).strip()
+
+    if not any((ip_endpoint, remote_url, host)):
+        return "", "", ""
+
+    if not any((host, method, direction, status_code)):
+        if ip_endpoint and not remote_url:
+            return ip_endpoint, _truncate_field(ip_endpoint, 80), ip_endpoint
+        if remote_url and not ip_endpoint:
+            endpoint = remote_url + (":" + port if port else "")
+            return endpoint, _truncate_field(endpoint, 80), endpoint
+
+    label_lines = []
+    detail_lines = []
+    if ip_endpoint:
+        label_lines.append(_truncate_field(ip_endpoint, 60))
+        detail_lines.append(f"Remote: {ip_endpoint}")
+    if remote_url:
+        label_lines.append(f"URL: {_truncate_field(remote_url, 60)}")
+        detail_lines.append(f"RemoteUrl: {remote_url}")
+    if host:
+        label_lines.append(f"Host: {_truncate_field(host, 60)}")
+        detail_lines.append(f"Host: {host}")
+    http_meta = []
+    if method:
+        http_meta.append(f"Method: {_truncate_field(method, 24)}")
+        detail_lines.append(f"Method: {method}")
+    if status_code:
+        http_meta.append(f"Status: {_truncate_field(status_code, 24)}")
+        detail_lines.append(f"Status: {status_code}")
+    if http_meta:
+        label_lines.append(" | ".join(http_meta))
+    if direction:
+        label_lines.append(f"Direction: {_truncate_field(direction, 24)}")
+        detail_lines.append(f"Direction: {direction}")
+
+    identity = "\x1f".join((ip_endpoint, remote_url, host, method, status_code, direction))
+    return identity, "\n".join(label_lines), "\n".join(detail_lines)
+
+
+def _network_signature_artifact(event, endpoint):
+    """Build ``(identity, label, detail)`` for ``NetworkSignatureInspected``.
+
+    Combines ``RemoteIP:RemotePort``, ``LocalIP:LocalPort``, and
+    ``SignatureName`` / ``SignatureMatchedContent`` from ``AdditionalFields``.
+    """
+    local_ip = _field(event, "LocalIP")
+    local_port = _field(event, "LocalPort")
+    local_endpoint = local_ip + (":" + local_port if local_port else "") if local_ip else ""
+
+    details = get_additional_fields_dict(event)
+    sig_name = as_text(details.get("SignatureName")).strip()
+    matched = as_text(details.get("SignatureMatchedContent")).strip()
+
+    if not any((endpoint, local_endpoint, sig_name, matched)):
+        return "", "", ""
+
+    if endpoint and not any((local_endpoint, sig_name, matched)):
+        return endpoint, _truncate_field(endpoint, 80), endpoint
+
+    label_lines = []
+    detail_lines = []
+    if endpoint:
+        label_lines.append(f"Remote: {_truncate_field(endpoint, 60)}")
+        detail_lines.append(f"Remote: {endpoint}")
+    if local_endpoint:
+        label_lines.append(f"Local: {_truncate_field(local_endpoint, 60)}")
+        detail_lines.append(f"Local: {local_endpoint}")
+    if sig_name:
+        label_lines.append(f"Signature: {_truncate_field(sig_name, 60)}")
+        detail_lines.append(f"SignatureName: {sig_name}")
+    if matched:
+        matched_line = " ".join(matched.split())
+        label_lines.append(f"Matched: {_truncate_field(matched_line, 60)}")
+        detail_lines.append(f"SignatureMatchedContent: {matched}")
+
+    identity = "\x1f".join((endpoint, local_endpoint, sig_name, matched))
+    return identity, "\n".join(label_lines), "\n".join(detail_lines)
+
+
+def _ntlm_authentication_artifact(event, endpoint):
+    """Build ``(identity, label, detail)`` for ``NtlmAuthenticationInspected``.
+
+    Combines ``RemoteIP:RemotePort`` with ``username``, ``hostname``,
+    ``server_nb_computer_name``, ``success``, and ``direction`` from
+    ``AdditionalFields``.
+    """
+    details = get_additional_fields_dict(event)
+    username = as_text(details.get("username")).strip()
+    hostname = as_text(details.get("hostname")).strip()
+    server_nb = as_text(details.get("server_nb_computer_name")).strip()
+    success = as_text(details.get("success")).strip()
+    direction = as_text(details.get("direction")).strip()
+
+    if not any((endpoint, username, hostname, server_nb)):
+        return "", "", ""
+
+    if endpoint and not any((username, hostname, server_nb, success, direction)):
+        return endpoint, _truncate_field(endpoint, 80), endpoint
+
+    label_lines = []
+    detail_lines = []
+    if endpoint:
+        label_lines.append(_truncate_field(endpoint, 60))
+        detail_lines.append(f"Remote: {endpoint}")
+    if username:
+        label_lines.append(f"User: {_truncate_field(username, 60)}")
+        detail_lines.append(f"Username: {username}")
+    if hostname:
+        label_lines.append(f"Host: {_truncate_field(hostname, 60)}")
+        detail_lines.append(f"Hostname: {hostname}")
+    if server_nb:
+        label_lines.append(f"Server: {_truncate_field(server_nb, 60)}")
+        detail_lines.append(f"Server NB: {server_nb}")
+    ntlm_meta = []
+    if success:
+        ntlm_meta.append(f"Success: {_truncate_field(success, 24)}")
+        detail_lines.append(f"Success: {success}")
+    if direction:
+        ntlm_meta.append(f"Direction: {_truncate_field(direction, 24)}")
+        detail_lines.append(f"Direction: {direction}")
+    if ntlm_meta:
+        label_lines.append(" | ".join(ntlm_meta))
+
+    identity = "\x1f".join((endpoint, username, hostname, server_nb, success, direction))
+    return identity, "\n".join(label_lines), "\n".join(detail_lines)
+
+
+def _ssl_connection_artifact(event, endpoint):
+    """Build ``(identity, label, detail)`` for ``SslConnectionInspected``.
+
+    Combines ``RemoteIP:RemotePort`` (or ``RemoteUrl``) with ``server_name``,
+    ``version``, and ``direction`` from ``AdditionalFields``.
+    """
+    details = get_additional_fields_dict(event)
+    server_name = as_text(details.get("server_name")).strip()
+    version = as_text(details.get("version")).strip()
+    direction = as_text(details.get("direction")).strip()
+
+    if not endpoint and not server_name:
+        return "", "", ""
+
+    if endpoint and not any((server_name, version, direction)):
+        return endpoint, _truncate_field(endpoint, 80), endpoint
+
+    label_lines = []
+    detail_lines = []
+    if endpoint:
+        label_lines.append(_truncate_field(endpoint, 60))
+        detail_lines.append(f"Remote: {endpoint}")
+    if server_name:
+        label_lines.append(f"Server: {_truncate_field(server_name, 60)}")
+        detail_lines.append(f"Server Name: {server_name}")
+    ssl_meta = []
+    if version:
+        ssl_meta.append(f"Version: {_truncate_field(version, 24)}")
+        detail_lines.append(f"Version: {version}")
+    if direction:
+        ssl_meta.append(f"Direction: {_truncate_field(direction, 24)}")
+        detail_lines.append(f"Direction: {direction}")
+    if ssl_meta:
+        label_lines.append(" | ".join(ssl_meta))
+
+    identity = "\x1f".join((endpoint, server_name, version, direction))
+    return identity, "\n".join(label_lines), "\n".join(detail_lines)
+
+
+def _artifact(builder, actor, event, kind, value, label, group, relation, color, detail=None, max_label=80):
     if not actor or not value:
         return
     node_id = f"defender_{kind}_{string_hash(value)}"
+    display = label if max_label is None else label[:max_label]
     builder.add_or_update_artifact_node(
-        node_id, label[:80], f"[{event.get('ActionType', '')}]\n{detail or value}", group, event,
+        node_id, display, f"[{event.get('ActionType', '')}]\n{detail or value}", group, event,
     )
     builder.add_edge(actor, node_id, relation, color, as_text(event.get("ActionType")), raw_event=event)
 
@@ -152,6 +416,9 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
                  "DeviceImageLoadEvents"}:
         if not actor_id:
             return
+        label = None
+        detail = None
+        max_label = 80
         if table == "DeviceFileEvents" and evt_type in FILE_ACTIONS:
             value = _field(event, "FolderPath") or _field(event, "FileName")
             kind, group, relation, color = "file", "file", evt_type, "#4da6ff"
@@ -163,7 +430,28 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
         elif table == "DeviceNetworkEvents" and evt_type in NETWORK_ACTIONS:
             remote = _field(event, "RemoteIP") or _field(event, "RemoteUrl")
             port = _field(event, "RemotePort")
-            value = remote + (":" + port if port else "") if remote else ""
+            endpoint = remote + (":" + port if port else "") if remote else ""
+            if evt_type == "DnsConnectionInspected":
+                value, label, detail = _dns_connection_artifact(event, endpoint)
+                max_label = None
+            elif evt_type == "HttpConnectionInspected":
+                value, label, detail = _http_connection_artifact(event)
+                max_label = None
+            elif evt_type == "ListeningConnectionCreated":
+                local_ip = _field(event, "LocalIP")
+                local_port = _field(event, "LocalPort")
+                value = local_ip + (":" + local_port if local_port else "") if local_ip else ""
+            elif evt_type == "NetworkSignatureInspected":
+                value, label, detail = _network_signature_artifact(event, endpoint)
+                max_label = None
+            elif evt_type == "NtlmAuthenticationInspected":
+                value, label, detail = _ntlm_authentication_artifact(event, endpoint)
+                max_label = None
+            elif evt_type == "SslConnectionInspected":
+                value, label, detail = _ssl_connection_artifact(event, endpoint)
+                max_label = None
+            else:
+                value = endpoint
             kind, group, relation, color = "network", "network", evt_type, "#00ffff"
         elif table == "DeviceImageLoadEvents" and evt_type == "ImageLoaded":
             value = _field(event, "FolderPath")
@@ -172,7 +460,8 @@ def parse_defender_event(builder: GraphBuilder, event: dict, evt_type: str, acto
             value = ""
         if value:
             actor = builder.get_or_create_process_node(actor_id, actor_name, username, hostname, evt_type, event)
-            _artifact(builder, actor, event, kind, value, value, group, relation, color)
+            _artifact(builder, actor, event, kind, value, label or value, group, relation, color,
+                      detail=detail, max_label=max_label)
             return
         return
     if table != "DeviceEvents":

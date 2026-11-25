@@ -6,10 +6,11 @@ extract the event type from whichever marker is present.
 """
 from typing import Any
 
-from app.parsers.defender_catalog import ACTION_TABLES, EXCLUSIVE_FIELDS
+from app.parsers.defender_catalog import DEFENDER_TABLES, EXCLUSIVE_FIELDS
 
 FALCON_EVENT_TYPE_FIELD = "#event_simpleName"
 DEFENDER_EVENT_TYPE_FIELD = "ActionType"
+DEFENDER_TYPE_FIELD = "Type"
 
 FALCON = "falcon"
 DEFENDER = "defender"
@@ -22,10 +23,13 @@ def get_vendor(event: Any) -> str:
         return UNKNOWN
     if FALCON_EVENT_TYPE_FIELD in event:
         return FALCON
+    type_value = event.get(DEFENDER_TYPE_FIELD)
+    if isinstance(type_value, str) and type_value.strip() in DEFENDER_TABLES:
+        return DEFENDER
     if DEFENDER_EVENT_TYPE_FIELD in event:
         return DEFENDER
-    if any(event.get(key) in ACTION_TABLES for key in ("TableName", "SourceTable")
-           if isinstance(event.get(key), str)):
+    if any(value.strip() in DEFENDER_TABLES for key in ("TableName", "SourceTable")
+           if isinstance(value := event.get(key), str)):
         return DEFENDER
     if any(event.get(field) not in (None, "") for fields in EXCLUSIVE_FIELDS.values()
            for field in fields):
@@ -44,7 +48,7 @@ def extract_event_type(event: Any, default: str = "Unknown") -> str:
     value = event.get(FALCON_EVENT_TYPE_FIELD)
     if value is None:
         value = event.get(DEFENDER_EVENT_TYPE_FIELD)
-    if value is None or value == "":
+    if value is None or (isinstance(value, str) and not value.strip()):
         if get_vendor(event) == DEFENDER:
             from app.parsers.defender import classify_defender_table
 

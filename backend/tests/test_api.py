@@ -91,6 +91,28 @@ def test_csv_invalid_certificate_dates_preserve_evidence_and_spawn(admin_client,
     assert any(log["CertificateCreationTime"] == "Invalid date" for log in logs["raw_logs"])
 
 
+def test_csv_with_defender_type_maps_actioned_and_actionless_tables(admin_client):
+    csv = (
+        b"Type,ActionType,DeviceName,InitiatingProcessId,ProcessId,FolderPath,SignerHash\n"
+        b"DeviceProcessEvents,ProcessCreated,H1,10,20,,abc\n"
+        b"DeviceFileEvents,FileCreated,H1,20,,C:\\tmp\\a.txt,\n"
+        b"DeviceInfo,,H1,,,,\n"
+        b"DeviceNetworkInfo,,H1,,,,\n"
+        b"DeviceFileCertificateInfo,,H1,,,,\n"
+        b"DisruptionAndResponseEvents,FutureDisruptionAction,H1,,,,\n"
+    )
+    response = _upload(admin_client, csv, "unified_defender.csv")
+    assert response.status_code == 200
+    dataset_id = response.json()["dataset_id"]
+
+    graph = admin_client.get(f"/api/graph/{dataset_id}").json()
+    assert graph["unmapped_events"] == {}
+    assert {"ProcessCreated", "FileCreated", "DeviceInfo", "DeviceNetworkInfo",
+            "DeviceFileCertificateInfo", "FutureDisruptionAction"} <= set(graph["event_types"])
+    assert any(edge["data"]["source"] == "10@H1" and edge["data"]["target"] == "20@H1"
+               and edge["data"]["label"] == "Spawns" for edge in graph["elements"]["edges"])
+
+
 def test_unmapped_events_are_aggregated_to_counts(admin_client):
     csv = b"ActionType,DeviceName\nSomeUnknownAction,H1\nSomeUnknownAction,H1\n"
     dataset_id = _upload(admin_client, csv, "unknown.csv").json()["dataset_id"]

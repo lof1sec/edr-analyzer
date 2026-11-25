@@ -14,7 +14,12 @@ from app.parsers.vendor import (
     "event, expected",
     [
         ({"#event_simpleName": "ProcessRollup2"}, FALCON),
+        ({"#event_simpleName": "ProcessRollup2", "Type": "DeviceProcessEvents"}, FALCON),
         ({"ActionType": "ProcessCreated"}, DEFENDER),
+        ({"Type": "DeviceProcessEvents"}, DEFENDER),
+        ({"Type": "DeviceInfo"}, DEFENDER),
+        ({"Type": "DisruptionAndResponseEvents"}, DEFENDER),
+        ({"Type": "UnknownTable"}, UNKNOWN),
         ({"foo": "bar"}, UNKNOWN),
         ({}, UNKNOWN),
         ("not a dict", UNKNOWN),
@@ -30,6 +35,9 @@ def test_get_vendor(event, expected):
     [
         ({"#event_simpleName": "DnsRequest"}, "DnsRequest"),
         ({"ActionType": "FileCreated"}, "FileCreated"),
+        ({"Type": "DeviceProcessEvents", "ActionType": "ProcessCreated"}, "ProcessCreated"),
+        ({"Type": "DeviceInfo"}, "DeviceInfo"),
+        ({"Type": "DeviceFileCertificateInfo", "ActionType": ""}, "DeviceFileCertificateInfo"),
         ({"#event_simpleName": ""}, "Unknown"),
         ({"foo": "bar"}, "Unknown"),
         ("not a dict", "Unknown"),
